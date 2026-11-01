@@ -1,0 +1,41 @@
+# 统一换行符：仓库里一律 LF。
+# Windows 上 checkout 成 CRLF 会让 C# 源文件的 diff 每次都全红；
+# 而 .bat/.ps1 这类脚本又必须保持 CRLF 才能被 cmd 正确解析 —— 这里只针对会进仓库的文本。
+* text=auto eol=lf
+
+# C# / 前端源码
+*.cs       text eol=lf
+*.csproj   text eol=lf
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.css      text eol=lf
+*.json     text eol=lf
+*.md       text eol=lf
+*.mjs      text eol=lf
+*.js       text eol=lf
+*.py       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+
+# 批处理脚本必须 CRLF，否则 cmd 解析会出错
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+
+# 二进制：不要做任何换行转换，也不要尝试 diff
+*.exe      binary
+*.dll      binary
+*.ico      binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.webp     binary
+*.gif      binary
+*.woff     binary
+*.woff2    binary
+*.ttf      binary
+*.otf      binary
+*.db       binary
+
+# 前端产物是压缩过的单文件，diff 没有意义（行数少但每行极长）
+wwwroot/index.html -diff linguist-generated=true

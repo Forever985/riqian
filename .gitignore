@@ -1,0 +1,43 @@
+# .NET
+bin/
+obj/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 本机配置与数据（不该进仓库）
+*.user
+
+# 运行期产物：数据根目录被指到仓库里时才会有，正常不会
+*.db
+*.db-shm
+*.db-wal
+
+# 注意：wwwroot/index.html **故意不忽略**。
+# 它是 Riqian.csproj 里的 EmbeddedResource（LogicalName="index.html"），
+# 缺了它 dotnet build 会直接失败。早年这里写过一行 wwwroot/index.html，
+# 结果「clone 下来编译不了」——前端产物必须提交，宁可仓库大 1.7 MB。
+# 提交前记得先 npm run build，否则提交的是上一次的旧界面。
+
+# ---- GitHub 化时补的（这些原来没排除，git init 后立刻发现问题） ----
+
+# 测试脚本的 node_modules（Playwright）。14 MB，靠 npm i 还原
+tests/node_modules/
+
+# 本地 publish 出来的 dist，CI 会自己构建，不该进仓库
+publish/
+
+# 需求核对过程中的中间产物（.tsv/.json/txt 分析结果），属于工作笔记
+.audit/
+
+# 本机发布/备份脚本（含绝对路径，别人用不上）
+tools/prune-backup.sh
+
+# 编辑器与系统垃圾
+.vs/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini

@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Riqian</AssemblyName>
+    <RootNamespace>Riqian</RootNamespace>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <Version>5.0.0</Version>
+    <Product>日签 · 打卡日记本</Product>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!--
+      单文件发布的两个必须项，写死在这里免得每次发布靠记忆：
+      - PublishSingleFile：托管程序集打包成一个 exe
+      - IncludeNativeLibrariesForSelfExtract：把 e_sqlite3.dll 这类原生库也塞进 exe，
+        启动时解压到 %TEMP%\.net\日签\<哈希>\ 再加载。
+        少了这一条，SQLite 会静态初始化失败（DllNotFoundException: e_sqlite3），
+        程序连主界面都出不来。
+    -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\index.html" LogicalName="index.html" />
+  </ItemGroup>
+
+  <!--
+    从 GitHub clone 下来的人最容易踩的坑：直接 dotnet build，报
+    「找不到 wwwroot/index.html」或者更莫名的资源错误。
+    真实原因是前端产物要 npm run build 才生成，而它被 .gitignore 忽略过一段时间。
+
+    这里在编译前检查一下，缺了就用一句人话说明该干什么，
+    而不是让人对着一行 MSB3030 猜。注意：只是诊断，不自动去跑 npm ——
+    编译过程偷偷装依赖会让离线环境直接失败。
+  -->
+  <Target Name="CheckFrontendBuilt" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <_UiHtml>$(MSBuildProjectDirectory)\wwwroot\index.html</_UiHtml>
+    </PropertyGroup>
+    <Warning
+      Condition="!Exists('$(_UiHtml)')"
+      Text="wwwroot/index.html 不存在 —— 这是内嵌的界面产物。先在 web 目录跑：npm install &amp;&amp; npm run build（需要 Node 18+），再 dotnet build。" />
+  </Target>
+
+</Project>

@@ -1,0 +1,81 @@
+# 构建验证 + 出可下载的 exe。
+#
+# 为什么要有这个：这个项目最常见的失败是「clone 下来编译不了」——
+# 前端产物是 EmbeddedResource，而它曾经被 .gitignore 排除掉。
+# CI 每次都从零 clone + 全新环境构建，能在别人踩坑之前先踩一遍。
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 必须是 Windows：项目是 net8.0-windows + WinForms，Linux 上连编译都过不去
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # ---------- 前端 ----------
+      # 顺序很重要：前端必须先构建，因为 wwwroot/index.html 要被嵌进 exe。
+      # 反过来的话不会报错，只会静默用仓库里那版旧界面 —— 详见 README。
+      - name: 安装前端依赖
+        working-directory: web
+        run: npm ci
+
+      - name: 构建前端
+        working-directory: web
+        # 这条命令内部包含 tsc --noEmit，类型错误会在这里就失败
+        run: npm run build
+
+      # 产物大小有一道硬上限：NavigateToString 时代留下的 2 MB 约束
+      # （现在走虚拟主机映射已经没有这个限制，但保持体积可控是好事）
+      - name: 检查产物体积
+        shell: pwsh
+        run: |
+          $f = Get-Item wwwroot/index.html
+          $kb = [math]::Round($f.Length / 1KB, 1)
+          Write-Host "wwwroot/index.html = $kb KB"
+          if ($f.Length -gt 4MB) {
+            Write-Error "产物超过 4 MB（$kb KB），检查是不是误把大资源内联进去了"
+          }
+
+      # ---------- 后端 ----------
+      - name: 还原
+        run: dotnet restore
+
+      - name: 编译（Debug）
+        run: dotnet build -c Debug --no-restore
+
+      # ---------- 发布 ----------
+      - name: 发布单文件 exe
+        run: dotnet publish -c Release -r win-x64 --self-contained true -o publish
+
+      - name: 上传 exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: riqian-win-x64
+          path: publish/Riqian.exe
+          # 自包含单文件大约 60-70 MB，默认保留 90 天够了
+          retention-days: 30
+
+      # 每次 push 都留一份未压缩的界面产物，方便排查「CI 出的界面和本地不一样」
+      - name: 上传 frontend 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: index.html
+          path: wwwroot/index.html
+          retention-days: 7
