@@ -11,8 +11,10 @@ import { DiagPanel } from '../features/DiagPanel';
 import { FontPicker, CustomFontRow } from '../features/FontPicker';
 import { FEATURES, TYPE_NAME } from '../lib/const';
 import {
-  COLOR_SLOTS, THEME_DEFAULTS, THEMES, hex2rgb, normalizeTheme, parseCustom, parseFeatures, rgb2hex, type ThemeColors,
+  COLOR_SLOTS, THEME_DEFAULTS, THEMES, THEME_PACK_PREFIX,
+  hex2rgb, normalizeTheme, parseCustom, parseFeatures, rgb2hex, type ThemeColors,
 } from '../lib/theme';
+import { readRegistry } from '../lib/extensions';
 import { Row, Chips, Switch, QCtx, fuzzy } from '../components/SetRow';
 import { HotkeySection, NavOrderEditor, SecuritySection, ShareSection, TraySection } from './SettingsV8';
 import { OrderEditor, normalize } from '../components/OrderEditor';
@@ -481,10 +483,26 @@ function RgbDialog({ onClose }: { onClose: () => void }) {
   const setSetting = useStore((s) => s.setSetting);
   const toast = useStore((s) => s.toast);
   const theme = normalizeTheme(settings.theme);
-  const themeName = THEMES.find((t) => t.k === theme)?.n || theme;
+  /*
+   * #241：装来的主题包槽名是 `pack:<id>`，THEMES 里查不到，
+   * 直接显示会冒出「调色板 · pack:probe.dusk」这种机器名。
+   * 从扩展清单里取真名，取不到就退成"主题包"。
+   */
+  const packRec = theme.startsWith(THEME_PACK_PREFIX)
+    ? readRegistry(settings as Record<string, unknown>).items.find(
+        (x) => x.kind === 'theme' && (x as { slot?: string }).slot === theme,
+      )
+    : undefined;
+  const themeName = theme.startsWith(THEME_PACK_PREFIX)
+    ? (packRec?.name || '主题包')
+    : (THEMES.find((t) => t.k === theme)?.n || theme);
 
   const [draft, setDraft] = useState<ThemeColors>(() => {
     const custom = parseCustom(settings.themeCustom as string | undefined)[theme] || {};
+    /*
+     * 装来的主题在 THEME_DEFAULTS 里没有出厂值，只能拿它自己那份覆盖值当底
+     * （installTheme 存进 themeCustom 的就是合并好的完整 16 色，所以够用）。
+     */
     return { ...(THEME_DEFAULTS[theme] || {}), ...custom };
   });
 

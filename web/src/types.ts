@@ -365,7 +365,8 @@ export type ViewKey =
   | 'records' | 'todos' | 'countdown' | 'stats' | 'settings'
   | 'notes' | 'profile' | 'welcome' | 'review'
   | 'changelog' | 'manual' | 'contact' | 'media' | 'music' | 'drafts'
-  | 'ledger' | 'alarms' | 'timeline' | 'draw';
+  | 'ledger' | 'alarms' | 'timeline' | 'draw'
+  | 'themeCenter' | 'pluginCenter' | 'workshop';
 
 /** 草稿箱里的一条 */
 export interface DraftItem {

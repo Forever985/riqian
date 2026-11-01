@@ -20,8 +20,23 @@ const THEME_ALL = THEMES.map((t) => t.k) as readonly string[];
 
 export function normalizeTheme(t?: string): string {
   const k = THEME_ALIAS[t || ''] || t || 'paper';
+  /*
+   * #241：`pack:<id>` 是「装来的主题包」占的槽名，不是内置主题。
+   * 早先这里一律回退到 paper，结果装了主题包毫无反应 ——
+   * 值存进去了，但 applyAppearance 读的是 normalize 之后的名字，
+   * 于是 `themeCustom['pack:xxx']` 那一条永远取不到，页面永远停在 paper。
+   *
+   * 现在原样保留：`html.dataset.theme` 会变成 "pack:xxx"，
+   * CSS 里没有这个选择器，所有变量落到 :root/paper 那套出厂值；
+   * 紧接着 applyAppearance 用内联 style 覆盖成包里那 16 个颜色
+   * （内联优先级最高，压得住 :root 的规则）。这正是"覆盖"该有的顺序。
+   */
+  if (k.startsWith(THEME_PACK_PREFIX)) return k;
   return THEME_ALL.includes(k) ? k : 'paper';
 }
+
+/** 主题包槽名前缀，和 lib/extensions.ts 里的 THEME_KEY_PREFIX 必须一致 */
+export const THEME_PACK_PREFIX = 'pack:';
 
 /* ================= RGB 自定义 ================= */
 

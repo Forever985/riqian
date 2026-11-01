@@ -11,6 +11,9 @@ const ICON: Record<string, IconName> = {
   records: 'search', todos: 'todo', countdown: 'hourglass', stats: 'chart', settings: 'sliders',
   notes: 'book', profile: 'user', welcome: 'sparkle', review: 'sparkle',
   drafts: 'archive', media: 'image', music: 'music', manual: 'book', changelog: 'clock', contact: 'question',
+  // #241
+  themeCenter: 'palette', pluginCenter: 'grid', workshop: 'book',
+  draw: 'pen', timeline: 'flow', ledger: 'database', alarms: 'bell',
 };
 
 /** 加号面板里「打开别的页面」的候选（按常用度排，不放设置这种低频的） */

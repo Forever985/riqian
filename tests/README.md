@@ -100,6 +100,10 @@ python tests/gen-pinyin.py --all    # 换扫描范围：整个文件（含注释
 | `views/Settings` 背景弹窗 / `features/mediaTone` | `probe-176`（`.tone-row` 5→11） |
 | `components/Tooltip` / 任何 `title`→`data-tip` | `v18` |
 | `views/Settings*` / `components/SetRow` | `flow`（主题卡数）+ `v14` + `v15` + `v18` |
+| `lib/pack.ts` / `lib/extensions.ts` / `features/PackUI` | `probe-241`（三中心 + 装/卸主题与插件）+ `_reg241` |
+| `views/ThemeCenter` / `PluginCenter` / `Workshop` | `probe-241` + `_layout241`（横向溢出 / 面板出界） |
+| `lib/theme.ts` 的 `normalizeTheme` | `probe-241` 的 [4] [6] 两步（`--bg` 真变了才算过）+ `_reg241` |
+| `features/colorPicker` / `features/draw` | `probe-241` 的 [10]–[13]（面板四件套 / 拖色相 / hex / 最近色） |
 | `views/Todos` / `features/todos` | `v12`（排序）+ `v16`（象限）+ `v18` |
 | `views/Notes` / `features/notes` | `v7` + `v16` |
 | `features/media` / `views/Library` | `v11` + `v15` |
@@ -209,3 +213,16 @@ python tests/gen-pinyin.py --all    # 换扫描范围：整个文件（含注释
     要验就在 `<数据根>/字体/` 放一个 `_probe-*.ttf` 再跑，跑完删掉。
 - **断言尽量用增量**（`count === before - 1`）而不是绝对值；截图统一 `.catch(()=>{})`，
   Playwright 在 WebView2 上偶尔会卡在 `page.screenshot` 的字体等待，截图不该让验收失败。
+- **v12.7 补的四条**：
+  - **主题生效要断言 `--bg` 的实际值变了**，不能只看「安装成功」的 toast。
+    `normalizeTheme` 吃前缀那个 bug 就是这样漏过去的：清单写了、弹层关了、
+    提示也弹了，但页面一点没变。
+  - **`P.eval()` 里的 RPC 名要对**。早先 `probe-241` 拿 `settings.all`（不存在，实际是
+    `bootstrap`）去读清单，永远拿不到，打印「装了 0 个」—— 而下一步却能卸载成功。
+    断言用错接口比真 bug 更容易骗人，看到矛盾结果先怀疑断言。
+  - **React 受控组件要绕过合成事件**：给 `textarea` / `input` 赋值必须用
+    `Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set`
+    再用原生 setter，然后 `dispatchEvent(new Event('input',{bubbles:true}))`。
+    直接 `el.value = x` 不会触发重渲染，`data-act` 按钮一直是 disabled。
+  - **拾色器面板断言别只看"开了没"**，要量 `getBoundingClientRect()` 有没有出窗口 ——
+    它的定位是 `absolute` 挂在工具栏上，工具栏换行或窗口窄了就会跑出去。

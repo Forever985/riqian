@@ -31,6 +31,9 @@ import { LedgerView } from './views/Ledger';
 import { AlarmsView } from './views/Alarms';
 import { MilestonesView } from './views/Milestones';
 import { DrawView } from './views/Draw';
+import { ThemeCenterView } from './views/ThemeCenter';
+import { PluginCenterView } from './views/PluginCenter';
+import { WorkshopView } from './views/Workshop';
 import { CommandPalette, QuickPanel, ShortcutHelp } from './features/quick';
 import { applyAppearance } from './lib/theme';
 import { importImageFiles, imageFilesFromDataTransfer } from './lib/upload';
@@ -356,6 +359,14 @@ export default function App() {
       case 'draw': return <Guarded scope="draw" label="画板"><DrawView /></Guarded>;
       case 'profile': return <ProfileView />;
       case 'stats': return <Guarded scope="stats" label="统计（能推断出你写了多少）"><StatsView /></Guarded>;
+      /*
+       * #241 三个中心不加 <Guarded>：这里没有用户的内容，
+       * 只有「装过哪些包」和公开的包元信息。锁上它只会挡住
+       * 用户自己给别人装东西，防不住任何泄露。
+       */
+      case 'themeCenter': return <ThemeCenterView />;
+      case 'pluginCenter': return <PluginCenterView />;
+      case 'workshop': return <WorkshopView />;
       case 'settings': return <SettingsView />;
       case 'today': return <Guarded scope="diary" target={date} label="这一天的日记"><TodayView /></Guarded>;
       default: return <TodayView />;

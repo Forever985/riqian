@@ -34,6 +34,11 @@ export const NAV: { k: ViewKey; ic: IconName; t: string; d: string; flag?: strin
   { k: 'drafts', ic: 'archive', t: '草稿箱', d: '写了还没定稿的日子', flag: 'navDrafts' },
   { k: 'media', ic: 'grid', t: '多媒体库', d: '图片、音乐、文件都收在这里', flag: 'navMedia' },
   { k: 'stats', ic: 'chart', t: '统计', d: '字数、打卡、专注的趋势', flag: 'navStats' },
+  // #241 三个中心：扩展生态入口。放在"设置"前面而不是藏进设置里 ——
+  // 用户拿到别人给的包，第一反应是找"哪里装"，不是翻设置。
+  { k: 'themeCenter', ic: 'palette', t: '主题', d: '内置主题 + 装别人的配色包', flag: 'navThemeCenter' },
+  { k: 'pluginCenter', ic: 'grid', t: '插件', d: '给日记加模块的扩展包', flag: 'navPluginCenter' },
+  { k: 'workshop', ic: 'book', t: '工坊', d: '模板、倒计时、标签这类内容包', flag: 'navWorkshop' },
   { k: 'profile', ic: 'user', t: '我的', d: '头像、资料、数据导入导出', flag: 'navProfile' },
   { k: 'settings', ic: 'sliders', t: '设置', d: '外观、模块、通知、快捷键', },
 ];

@@ -47,6 +47,9 @@ export const VIEW_TITLE: Record<string, string> = {
   drafts: '草稿箱', changelog: '更新日志', manual: '使用说明书', contact: '联系我们',
   media: '多媒体库', music: '多媒体库',
   ledger: '记账本', alarms: '提醒', timeline: '时间轴',
+  draw: '画板',
+  // #241
+  themeCenter: '主题中心', pluginCenter: '插件中心', workshop: '创意工坊',
 };
 
 const emptyFilter: RecFilter = { q: '', from: '', to: '', mood: '0', tag: '', fav: '0', hasImg: '0' };

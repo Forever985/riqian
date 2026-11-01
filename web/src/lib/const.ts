@@ -36,6 +36,9 @@ export const FEATURES = [
   { k: 'navNotes', n: '笔记 / 备忘录' },
   { k: 'navDraw', n: '画板' },
   { k: 'navStats', n: '统计' },
+  { k: 'navThemeCenter', n: '主题中心' },
+  { k: 'navPluginCenter', n: '插件中心' },
+  { k: 'navWorkshop', n: '创意工坊' },
   { k: 'navProfile', n: '我的（账户、安全、缓存）' },
 ];
 

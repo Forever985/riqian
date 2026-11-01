@@ -17,6 +17,7 @@ import { api } from '../api';
 import { useStore } from '../store';
 import { Icon } from '../components/Icons';
 import { imgUrl } from '../lib/media';
+import { ColorPicker, normalizeHex } from './colorPicker';
 
 /* ---------------- 数据形状 ---------------- */
 
@@ -144,6 +145,14 @@ export function DrawBoard({
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [tool, setTool] = useState<Tool>('pen');
   const [color, setColor] = useState(PALETTE[0]);
+  /*
+   * #240 拾色器。存两样东西：
+   *   · `recent` —— 最近用过的自定义色，纯前端记着就行（存设置里会让
+   *     "换个颜色"变成一次落库操作，画板上高频操作不值当）
+   *   · 固定色板之外的一律算自定义，所以要单独一个 state 管面板开合
+   */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
   const [width, setWidth] = useState(4);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [dirty, setDirty] = useState(false);
@@ -376,7 +385,7 @@ export function DrawBoard({
               ))}
             </div>
 
-            <div className="db-grp">
+            <div className="db-grp pick">
               {PALETTE.map((c) => (
                 <button
                   key={c}
@@ -385,6 +394,36 @@ export function DrawBoard({
                   onClick={() => { setColor(c); if (tool === 'eraser') setTool('pen'); }}
                 />
               ))}
+              {/*
+               * 自定义色按钮。当前色不在固定板里时，按钮本身就是那个颜色 ——
+               * 否则用户调完色关掉面板，就会以为颜色自己变回去了。
+               */}
+              <button
+                className={`db-tool ${pickerOpen ? 'on' : ''}`}
+                title="调一个任意颜色"
+                style={{ marginLeft: 2 }}
+                onClick={() => setPickerOpen((v) => !v)}
+                data-act="draw-picker-open"
+              >
+                <span className="db-color-cur">
+                  <i style={{ background: color }} />
+                  {PALETTE.includes(color) ? '更多' : '自定'}
+                </span>
+              </button>
+
+              {pickerOpen && (
+                <ColorPicker
+                  value={color}
+                  recent={recent}
+                  onChange={(hex) => { setColor(hex); if (tool === 'eraser') setTool('pen'); }}
+                  onCommit={(hex) => {
+                    const n = normalizeHex(hex);
+                    if (!n) return;
+                    setRecent((r) => [n, ...r.filter((x) => x !== n)].slice(0, 8));
+                  }}
+                  onClose={() => setPickerOpen(false)}
+                />
+              )}
             </div>
 
             <div className="db-grp">
