@@ -1,0 +1,34 @@
+修 CI 自检误判：WinExe 不能用 & 调用 + 输出编码静默失效
+
+build #1 在 GitHub runner 上红了，本地却全绿。两个独立原因叠加。
+
+## 1. `& Riqian.exe` 根本不会等待
+
+Riqian.exe 是 WinExe（GUI 子系统）。PS 用 `&` 调用 GUI 程序时
+**不会等待**它退出，拉起进程就往下走 —— 实测 309 ms 返回，而自检实际要 1 秒多。
+于是：
+  · $LASTEXITCODE 从未被设置，读到的是 $null；
+  · 而 `$null -ne 0` 为 **真** → 通过了也判失败。
+
+日志里的现场痕迹：报错文本是「退出码 」—— 空的；
+而且自检的实际输出出现在 ##[endgroup] **之后**，进程还在后台往控制台写。
+
+改成 Start-Process -Wait -PassThru，读 $p.ExitCode。
+build.yml 和 release.yml 两处都改了（release.yml 的安装包冒烟同一个 bug）。
+
+## 2. Console.OutputEncoding 在 WinExe 上是静默无效的
+
+设了 UTF-8，写出来仍是 GBK 字节（c8d5 c7a9 = 「日签」）。
+因为进程没有自己的控制台，Console.Out 落在重定向流上，
+这个属性赋值「成功」但不起作用。
+
+后果比第 1 条更阴：日志里中文和 ✓/✗ 全变 `?`，
+自检真失败时唯一能定位问题的那张表反而看不见。
+
+改成自己包一个 StreamWriter 直接写 Console.OpenStandardOutput()，
+绕开 Console 对「有没有真控制台」的判断。返回前显式 Flush。
+
+实测：输出首字节 e6 97 a5（UTF-8 的「日」），30 行完整，中文与 ✓ 正常。
+
+（顺带记一个本机坑：Start-Process 在本机报「字典中的关键字 HTTPS_PROXY
+与 https_proxy 重复」，是环境变量大小写重复导致的，与本次代码无关。）

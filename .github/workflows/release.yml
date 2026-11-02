@@ -121,9 +121,16 @@ jobs:
           }
           Write-Host "OK 安装版无 portable.txt"
 
-          # 装出来的 exe 要能跑
-          & "$target\Riqian.exe" --selfcheck
-          if ($LASTEXITCODE -ne 0) { Write-Error "装完之后自检失败"; exit 1 }
+          # 装出来的 exe 要能跑。
+          # 同样必须 Start-Process -Wait —— Riqian.exe 是 WinExe，
+          # 用 `&` 调用不会等它退出，$LASTEXITCODE 永远是空的。
+          $out = Join-Path $env:RUNNER_TEMP 'installed-selfcheck.log'
+          $p = Start-Process -FilePath "$target\Riqian.exe" -ArgumentList '--selfcheck' `
+               -NoNewWindow -Wait -PassThru `
+               -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+          Get-Content $out -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+          if ($p.ExitCode -ne 0) { Write-Error "装完之后自检失败（退出码 $($p.ExitCode)）"; exit 1 }
+          Write-Host "OK 安装版自检通过"
 
           # 卸载前造一份"用户数据"，验证卸载不会删它。
           # 先清空再建：保证这个文件是 CI 自己造的、而且是目录里唯一的内容 ——

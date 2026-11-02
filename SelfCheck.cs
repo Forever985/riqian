@@ -105,13 +105,36 @@ namespace Riqian
         /// </summary>
         public static int Run()
         {
+            /* 输出必须显式钉成 UTF-8，而且**不能只设 Console.OutputEncoding**。
+             *
+             * 这是个 WinExe（GUI 子系统），进程启动时没有自己的控制台。
+             * 在 CI 里它由 pwsh 重定向输出，Console.Out 落到一个「不是真的控制台」
+             * 的流上 —— 此时 `Console.OutputEncoding = UTF8` 会**静默无效**
+             * （实测：设了，写出来的仍然是 GBK 字节 c8d5 c7a9...）。
+             *
+             * 后果：日志里所有中文和 ✓/✗ 全变成 `?`，自检真失败时唯一能定位
+             * 问题的那张表反而看不见。第一次在 CI 上跑就是这么翻车的 ——
+             * 满屏问号，只能看出「退出码 」是空的。
+             *
+             * 可靠做法是自己包一个 StreamWriter 直接写标准输出流，绕开
+             * Console 那层对「有没有真控制台」的判断。
+             */
+            var utf8 = new System.Text.UTF8Encoding(false);
+            TextWriter log = Console.Out;
+            try
+            {
+                var stdout = Console.OpenStandardOutput();
+                if (stdout != null) log = new StreamWriter(stdout, utf8) { AutoFlush = true };
+            }
+            catch { /* 连标准输出都打不开就退回默认，不影响自检结论 */ }
+
             var root = Path.Combine(Path.GetTempPath(), "riqian-selfcheck-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             var fails = new List<string>();
             Db db = null;   // 在 try 外声明，finally 里才能释放
 
-            Console.WriteLine("日签自检 · 全新装机路径");
-            Console.WriteLine("临时库: " + root);
-            Console.WriteLine();
+            log.WriteLine("日签自检 · 全新装机路径");
+            log.WriteLine("临时库: " + root);
+            log.WriteLine();
 
             try
             {
@@ -122,7 +145,7 @@ namespace Riqian
                 db = new Db(root);
 
                 // ---- 1. schema 逐列核对 ----
-                Console.WriteLine("【1】表结构核对");
+                log.WriteLine("【1】表结构核对");
                 var schema = ReadSchema(db.DbPath);
                 foreach (var kv in Expected.OrderBy(x => x.Key))
                 {
@@ -130,7 +153,7 @@ namespace Riqian
                     if (actual == null)
                     {
                         fails.Add($"{kv.Key}: 表不存在");
-                        Console.WriteLine($"  ✗ {kv.Key,-12} 表不存在");
+                        log.WriteLine($"  ✗ {kv.Key,-12} 表不存在");
                         continue;
                     }
                     // 只查"该有的有没有"，不查"多出来的" ——
@@ -138,39 +161,39 @@ namespace Riqian
                     var missing = kv.Value.Where(c => !actual.Contains(c)).ToArray();
                     if (missing.Length == 0)
                     {
-                        Console.WriteLine($"  ✓ {kv.Key,-12} {actual.Count} 列");
+                        log.WriteLine($"  ✓ {kv.Key,-12} {actual.Count} 列");
                     }
                     else
                     {
                         fails.Add($"{kv.Key}: 缺 {string.Join(", ", missing)}");
-                        Console.WriteLine($"  ✗ {kv.Key,-12} 缺列: {string.Join(", ", missing)}");
+                        log.WriteLine($"  ✗ {kv.Key,-12} 缺列: {string.Join(", ", missing)}");
                     }
                 }
 
                 // ---- 2. 真跑几条读取 ----
-                Console.WriteLine();
-                Console.WriteLine("【2】开库后读取冒烟");
+                log.WriteLine();
+                log.WriteLine("【2】开库后读取冒烟");
                 foreach (var (label, run) in Smoke())
                 {
                     try
                     {
                         run(db);
-                        Console.WriteLine($"  ✓ {label}");
+                        log.WriteLine($"  ✓ {label}");
                     }
                     catch (Exception ex)
                     {
                         fails.Add($"{label}: {ex.GetType().Name}: {ex.Message}");
-                        Console.WriteLine($"  ✗ {label}");
-                        Console.WriteLine($"      {ex.GetType().Name}: {ex.Message}");
+                        log.WriteLine($"  ✗ {label}");
+                        log.WriteLine($"      {ex.GetType().Name}: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
                 fails.Add("建库失败: " + ex);
-                Console.WriteLine();
-                Console.WriteLine("✗ 建库过程直接抛异常:");
-                Console.WriteLine(ex);
+                log.WriteLine();
+                log.WriteLine("✗ 建库过程直接抛异常:");
+                log.WriteLine(ex);
             }
             finally
             {
@@ -195,7 +218,7 @@ namespace Riqian
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("  ! 关闭数据库连接时出错: " + ex.Message);
+                    log.WriteLine("  ! 关闭数据库连接时出错: " + ex.Message);
                 }
 
                 try
@@ -204,25 +227,27 @@ namespace Riqian
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("  ! 临时目录没删掉（不影响结论）: " + root);
-                    Console.WriteLine("    " + ex.Message);
+                    log.WriteLine("  ! 临时目录没删掉（不影响结论）: " + root);
+                    log.WriteLine("    " + ex.Message);
                 }
             }
 
-            Console.WriteLine();
+            log.WriteLine();
             if (fails.Count == 0)
             {
-                Console.WriteLine("========== 自检通过 ==========");
+                log.WriteLine("========== 自检通过 ==========");
+                log.Flush();
                 return 0;
             }
 
-            Console.WriteLine($"========== 自检失败，{fails.Count} 项 ==========");
-            foreach (var f in fails) Console.WriteLine("  · " + f);
-            Console.WriteLine();
-            Console.WriteLine("这类问题只在「全新安装 / 删档重来 / 换机器」时出现，");
-            Console.WriteLine("老库因为早已升级完毕、不会触发整表重建，所以本地永远看不出来。");
-            Console.WriteLine("改法通常是在 MigrateIdsToText 的重建列清单里补列，");
-            Console.WriteLine("并在迁移之后再 EnsureColumn 兜一次底。");
+            log.WriteLine($"========== 自检失败，{fails.Count} 项 ==========");
+            foreach (var f in fails) log.WriteLine("  · " + f);
+            log.WriteLine();
+            log.WriteLine("这类问题只在「全新安装 / 删档重来 / 换机器」时出现，");
+            log.WriteLine("老库因为早已升级完毕、不会触发整表重建，所以本地永远看不出来。");
+            log.WriteLine("改法通常是在 MigrateIdsToText 的重建列清单里补列，");
+            log.WriteLine("并在迁移之后再 EnsureColumn 兜一次底。");
+            log.Flush();
             return 1;
         }
 

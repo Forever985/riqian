@@ -98,11 +98,33 @@ jobs:
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           $env:PYTHONIOENCODING = 'utf-8'
 
-          & ./publish/Riqian.exe --selfcheck
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "全新装机自检失败（退出码 $LASTEXITCODE）。看上面哪张表缺哪一列。"
+          # ⚠️ 必须用 Start-Process -Wait，**不能**用 `& ./publish/Riqian.exe`。
+          #
+          # Riqian.exe 是 WinExe（GUI 子系统）。从 PowerShell 用 `&` 调用一个
+          # GUI 程序时，PowerShell **不会等待**它退出 —— 它只是把进程拉起来就
+          # 立刻往下走。于是：
+          #   · $LASTEXITCODE 从来没被设置，读到的是 $null；
+          #   · 而 `$null -ne 0` 为 **真** → 明明通过了也判失败。
+          # 第一次在 CI 上跑就栽在这：《全新装机自检》报「退出码 」是空的，
+          # 而自检的实际输出出现在 ##[endgroup] 之后（进程还在后台往控制台写）。
+          #
+          # Start-Process -Wait 会真的等它退出，-PassThru 把进程对象拿回来读退出码。
+          # 顺带把输出重定向到文件再打出来，保证日志顺序正常、不丢。
+          $out = Join-Path $env:RUNNER_TEMP 'selfcheck.log'
+          $p = Start-Process -FilePath './publish/Riqian.exe' -ArgumentList '--selfcheck' `
+               -NoNewWindow -Wait -PassThru `
+               -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+          Get-Content $out -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+          if (Test-Path "$out.err") {
+            $e = Get-Content "$out.err" -Encoding UTF8
+            if ($e) { Write-Host "--- stderr ---"; $e | ForEach-Object { Write-Host $_ } }
+          }
+
+          if ($p.ExitCode -ne 0) {
+            Write-Error "全新装机自检失败（退出码 $($p.ExitCode)）。看上面哪张表缺哪一列。"
             exit 1
           }
+          Write-Host "自检退出码 0"
 
       # ---------- 启动冒烟 ----------
       #
