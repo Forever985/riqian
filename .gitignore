@@ -37,6 +37,10 @@ tests/tests/
 # 本地 publish 出来的 dist，CI 会自己构建，不该进仓库
 publish/
 
+# 发布包产物（安装程序 / 绿色版 zip / 源码包 zip）。
+# 由 installer/build-release.ps1 或 CI 生成，上传到 GitHub Releases，不进代码库。
+releases/
+
 # 需求核对过程中的中间产物（.tsv/.json/txt 分析结果），属于工作笔记
 .audit/
 

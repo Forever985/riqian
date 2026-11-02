@@ -19,9 +19,42 @@ namespace Riqian
         private Db db;
         private bool closing;
 
-        private static readonly string ConfigDir =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Riqian");
-        private static readonly string ConfigFile = Path.Combine(ConfigDir, "config.json");
+        /* 便携模式下配置也跟着 exe 走。
+         *
+         * 不这么做的话，绿色版拷到另一台机器仍然读 %APPDATA%\Riqian\config.json ——
+         * 而那台机器上的 config.json 可能压根不存在（于是走默认目录，数据没跟着来），
+         * 也可能存在（于是读到别人留下的路径）。两种都不是「拷走文件夹 = 完整迁移」。
+         *
+         * 改成按需计算而不是 static readonly：static 字段在类第一次被访问时就求值，
+         * 那时 Environment.ProcessPath 拿得到，但这个决策依赖"exe 旁边有没有 portable.txt"，
+         * 写成延迟属性更直白，也避免初始化顺序上的意外。 */
+        private static bool IsPortable
+        {
+            get
+            {
+                try
+                {
+                    var dir = Path.GetDirectoryName(Environment.ProcessPath);
+                    return !string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, "portable.txt"));
+                }
+                catch { return false; }
+            }
+        }
+
+        private static string ConfigDir
+        {
+            get
+            {
+                if (IsPortable)
+                {
+                    var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+                    if (!string.IsNullOrEmpty(exeDir)) return Path.Combine(exeDir, "日签数据");
+                }
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Riqian");
+            }
+        }
+
+        private static string ConfigFile => Path.Combine(ConfigDir, "config.json");
 
         public MainForm()
         {
@@ -154,6 +187,36 @@ namespace Riqian
                     var dir = a.Substring(flag.Length).Trim('"');
                     if (dir.Length > 0) return dir;
                 }
+            }
+
+            /* 便携模式：exe 同目录下有 `portable.txt` 就把数据放它旁边。
+             *
+             * 为什么用标记文件而不是"检测是不是在 Program Files 下"：
+             * 绿色版的定义是「拷走整个文件夹 = 完整迁移」，这必须由**打包那一刻**
+             * 决定，不能靠运行时猜路径。同一个 exe 既可能是安装版（数据该进用户目录）
+             * 也可能是绿色版（数据该跟着走），靠路径猜一定会猜错 ——
+             * 有人就喜欢把绿色版解到 Program Files 旁边。
+             *
+             * 用一个空文件当开关：打包脚本决定放不放，运行时只认它的存在。
+             * 优先级排在 --data-root 之后（测试用的旁路参数仍然最高），
+             * 但排在配置文件之前 —— 便携版不该被别的机器上遗留的 config.json 带跑。
+             *
+             * 目录名取 `日签数据` 而不是直接扔在 exe 旁边：
+             * 旁边会生成 riqian.db / 图片库 / 自动备份 / 导出 四个条目，
+             * 跟 exe 混在一起看着很乱，也容易误删。 */
+            try
+            {
+                var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+                if (!string.IsNullOrEmpty(exeDir) &&
+                    File.Exists(Path.Combine(exeDir, "portable.txt")))
+                {
+                    return Path.Combine(exeDir, "日签数据");
+                }
+            }
+            catch (Exception ex)
+            {
+                // 便携判断失败不该拦住启动，退回正常流程就行
+                Diag.Warn("app.config", "便携模式判断失败，按常规方式解析数据目录", ex);
             }
 
             var fallback = Directory.Exists(@"E:\")
