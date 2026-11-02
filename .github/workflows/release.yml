@@ -220,16 +220,25 @@ jobs:
             exit 1
           }
 
-          # 反向断言：便携模式下配置和配置里的数据目录都该落在 exe 旁边。
-          # 这一条比上面那条更容易被破坏 —— 数据目录走 ResolveRoot，
+          # 反向断言：便携模式下**配置目录**也必须在 exe 旁边。
+          #
+          # 这一条比数据落点那条更容易被破坏 —— 数据目录走 ResolveRoot，
           # 配置目录走 ConfigDir，是两段独立代码，改一处不会牵连另一处。
-          # 只要 ConfigDir 忘了判便携，%APPDATA% 就会被悄悄写一份，
-          # 用户拷走文件夹就丢设置（数据还在，但他会以为全丢了）。
+          # 只要 ConfigDir 忘了判便携，%APPDATA% 就会被悄悄写一份。
+          #
+          # ⚠️ 别断言 config.json 存在。它只在用户**手动改过数据目录**时才写
+          # （见 MainForm.ChangeRoot），全新解压首次启动根本不生成。
+          # 第一次写这条断言就栽在这：报「配置没落在 exe 旁边」，
+          # 而实际上便携模式完全正常、只是没人改过设置。
+          #
+          # 可靠的证据是 debug-api.json —— 只要带 --debug-api 启动就一定会写，
+          # 而它的位置由 DebugApi.InfoFile → MainForm.ConfigDir 决定。
+          # 它落在便携目录 = ConfigDir 判对了。
           $cfgDir = "$dir\日签数据"
-          if (Test-Path (Join-Path $cfgDir 'config.json')) {
-            Write-Host "OK 配置也落在便携目录"
+          if (Test-Path (Join-Path $cfgDir 'debug-api.json')) {
+            Write-Host "OK 配置目录也落在便携目录（debug-api.json 在这）"
           } else {
-            Write-Error "便携模式的配置没落在 exe 旁边（ConfigDir 没判 IsPortable？）"
+            Write-Error "便携模式的配置目录没落在 exe 旁边（ConfigDir 没判 IsPortable？）"
             Get-ChildItem $cfgDir -Recurse -Depth 1 -ErrorAction SilentlyContinue |
               Select-Object FullName | Write-Host
             exit 1
