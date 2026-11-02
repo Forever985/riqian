@@ -1,7 +1,7 @@
 import type { Settings } from '../types';
 import { api } from '../api';
 import { applyCursor } from './cursor';
-import { setDayStart, setTimezone, setHour12, setDateFormat } from './date';
+import { setDayStart, setTimezone, setHour12, setDateFormat, setLang } from './date';
 import { ensureImportedFont, importFileOf, loadedImported, syncImportedFont } from './fonts';
 
 export const THEMES = [
@@ -119,6 +119,14 @@ export function parseCustom(raw?: string): Record<string, ThemeColors> {
 
 export function applyAppearance(s: Settings) {
   const html = document.documentElement;
+  /*
+   * 第 56 条：语言在函数最前面就定下来。
+   *
+   * 下面多处要用它（导航宽度、`<html lang>`、日期词表），
+   * 所以必须**先声明再用** —— 早先这三处各写一遍 `String(s.language || ...)`，
+   * 改成提到函数顶部一个变量，免得某处漏了兜底值。
+   */
+  const lang = String(s.language || 'zh-Hans');
   const theme = normalizeTheme(s.theme);
   html.dataset.theme = theme;
   html.dataset.round = (s.round as string) || 'soft';
@@ -132,7 +140,20 @@ export function applyAppearance(s: Settings) {
   html.style.setProperty('--fs', `${Number(s.fontSize) || 16}px`);
   const density = s.density as string;
   html.style.setProperty('--lh', String(Number(s.lineHeight) || (density === 'compact' ? 1.7 : density === 'loose' ? 2.05 : 1.85)));
-  html.style.setProperty('--navw', `${Number(s.navWidth) || 218}px`);
+  /*
+   * 第 56 条：导航宽度要跟着语言放宽。
+   *
+   * 德语是最长的：Einstellungen / Erinnerungen / Tastenkürzel，
+   * 在 218px 里全被 `nowrap + ellipsis` 切成「Einstellunge…」。
+   * 所以德语默认用 248px。
+   *
+   * **只在用户没手动调过时才放宽**（218 就是默认值，等于没调过）：
+   * 用户拖过宽度说明他有自己的偏好，德语长了 30px 也该由他自己拖，
+   * 不该被语言切换悄悄改回去。
+   */
+  const navW = Number(s.navWidth) || 218;
+  const deWide = lang.startsWith('de') && navW === 218;
+  html.style.setProperty('--navw', `${deWide ? 248 : navW}px`);
   // v10：内容宽度 / 字体 也能自定义（第 76 条）
   /*
    * 第 153 条：用户说「最大化后导航栏右侧有很大空隙，而且是写死的」。
@@ -165,7 +186,28 @@ export function applyAppearance(s: Settings) {
    */
   html.toggleAttribute('data-appbg', !!bg && !bg.startsWith('#'));
   const font = String(s.fontFamily || '').trim();
-  html.style.setProperty('--font', font || '-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif');
+  /*
+   * 兜底字体栈要跟着语言走。
+   *
+   * ⚠️ 这里有个坑：`html.style.setProperty('--font', ...)` 是**内联样式**，
+   * 优先级高于任何 CSS 选择器。所以 styles.css 里那两条
+   *     html[lang="ja"]{--font:...}  /  html[lang="de"]{--font:...}
+   * 在内联值存在时**一行都不生效** —— 实测过，日语界面拿到的还是微软雅黑。
+   *
+   * 为什么日语不能用微软雅黑：它对假名有一套"中文字形"的写法
+   * （比如 直 / 骨 / 今 的钩和撇），日本人一眼就看得出是中文排版软件。
+   * 德语不需要特殊字形，但 Segoe UI Variable 的字宽更均匀，
+   * 长复合词在窄栏里不容易挤成一坨。
+   *
+   * 顺序：用户自己选的字体 > 按语言给的推荐栈。
+   * 用户显式选过就别抢他的 —— 那条设置的意义就是"我要用这个"。
+   */
+  const fallbackFont = lang.startsWith('ja')
+    ? '-apple-system,BlinkMacSystemFont,"Yu Gothic UI","Meiryo","Hiragino Kaku Gothic ProN","Noto Sans JP","Segoe UI",sans-serif'
+    : lang.startsWith('de')
+      ? '-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Helvetica Neue",Arial,sans-serif'
+      : '-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+  html.style.setProperty('--font', font || fallbackFont);
   /*
    * 第 107 / 170 条：用户导入的字体是 FontFace 注册进来的，注册是异步的。
    * 这里不能 await（applyAppearance 是同步的、被 React effect 每帧可能调），
@@ -196,6 +238,31 @@ export function applyAppearance(s: Settings) {
   setTimezone(s.timezone as string | undefined);
   setHour12(String(s.timeFormat ?? '24'));
   setDateFormat(s.dateFormat as string | undefined);
+  /*
+   * 第 56 条：语言也要灌进去。
+   *
+   * date.ts 只维护「今天/昨天/前天」三个词，不从 i18n 引 —— 那样会形成
+   * i18n → store → date → i18n 的循环，而这种循环编译期不报错、运行时才
+   * undefined。详见 date.ts 顶部那段注释。
+   *
+   * 顺序上必须在 setDateFormat 之后：fmtDate 会同时看 DATE_FMT 和 LANG
+   * （德语在用户没手选顺序时用「日月年+点号」，而不是中文的「年月日」）。
+   */
+  setLang(String(s.language || 'zh-Hans'));
+
+  /*
+   * 第 56 条：`<html lang>` 必须跟着语言走，不能只在 React 里换字符串。
+   *
+   * 浏览器的这几件事全靠这个属性：
+   *   · 自动断行 / 连字符（`hyphens:auto` 只对声明了 lang 的元素生效）
+   *   · 字体回退顺序（日文假名会优先挑到日文字体，而不是中文字体里那套假名）
+   *   · 朗读器发音
+   * CSS 里 `html[lang^="de"]` 那几条 UI 适配规则也依赖它。
+   *
+   * 用 zh-Hans / ja / de 这些标准标签，不要写 "zh-CN" —— 我们支持的是
+   * 简体这一支，让浏览器按 Hans 挑字形。
+   */
+  if (html.getAttribute('lang') !== lang) html.setAttribute('lang', lang);
 
   // RGB 自定义：把当前主题的覆盖值写进内联变量（优先级高于主题选择器的规则）
   const custom = parseCustom(s.themeCustom as string | undefined)[theme] || {};

@@ -1,6 +1,37 @@
 export const pad = (n: number) => String(n).padStart(2, '0');
 
 /* ============================================================================
+ * 语言：这里**故意不 import** lib/i18n
+ * ----------------------------------------------------------------------------
+ * 依赖链是 store.ts → lib/date.ts，而 lib/i18n.ts → store.ts。
+ * 如果这里再 `import { tr } from './i18n'`，就形成
+ *   i18n → store → date → i18n
+ * 的循环。这类循环**编译期不报错**，只在运行时某个模块先被求值时变成
+ * undefined —— 这个项目为此踩过坑（见开发文档里 ui.tsx / Lock 那次）。
+ *
+ * 所以改成显式注入：applyAppearance 读设置后调 setLang()，
+ * date.ts 自己只维护**日期相关的几个词**（今天/昨天/前天）。
+ * 只重复三个词，换掉一次运行时 undefined 的风险，这笔交易划算。
+ * ========================================================================== */
+
+let LANG = 'zh-Hans';
+
+/** 由 applyAppearance 在每次设置变化时调用 */
+export function setLang(v: string | null | undefined) {
+  LANG = String(v || 'zh-Hans');
+}
+export function getLang() { return LANG; }
+
+/** 日期用到的三个相对日词。key 与 lib/i18n.ts 的口径保持一致 */
+const DAY_WORDS: Record<string, Record<string, string>> = {
+  en: { 今天: 'Today', 昨天: 'Yesterday', 前天: 'Two days ago' },
+  ja: { 今天: '今日', 昨天: '昨日', 前天: '一昨日' },
+  de: { 今天: 'Heute', 昨天: 'Gestern', 前天: 'Vorgestern' },
+};
+
+const dayWord = (zh: string) => DAY_WORDS[LANG]?.[zh] ?? zh;
+
+/* ============================================================================
  * 第 106 / 171 条：时区与时间格式
  * ----------------------------------------------------------------------------
  * 之前这两个设置项只在设置页写库，没有任何代码读它 —— 填了不起作用。
@@ -138,28 +169,47 @@ export function shiftMonth(ym: string, delta: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 }
 
+/**
+ * 日历格子里那种短标签。今天专门显示成「今天」。
+ *
+ * 加日德后要跟着语言走：
+ *   zh 今天 / 10月26日     ja 今日 / 10月26日
+ *   en Today / 10/26       de Heute / 26.10.
+ * 只翻「今天」这个词、不翻日期格式，会变成「Today / 10月26日」这种半截混搭。
+ */
 export function cnDateLabel(date: string, today: string): string {
-  if (date === today) return '今天';
+  if (date === today) return dayWord('今天');
   const x = parseKey(date);
-  // 第 229 条：这里原来写死「M月D日」。这是**不带年**的短标签，
-  // 所以不能直接借 fmtDate（那会补出年份撑爆一行），只把顺序拆出来。
+  const lang = LANG;
+  if (lang.startsWith('de')) {
+    if (DATE_FMT === 'mdy') return `${pad(x.getMonth() + 1)}.${pad(x.getDate())}.`;
+    return `${pad(x.getDate())}.${pad(x.getMonth() + 1)}.`;
+  }
+  if (lang.startsWith('en') || DATE_FMT === 'mdy') {
+    return DATE_FMT === 'dmy'
+      ? `${pad(x.getDate())}/${pad(x.getMonth() + 1)}`
+      : `${pad(x.getMonth() + 1)}/${pad(x.getDate())}`;
+  }
   if (DATE_FMT === 'dmy') return `${x.getDate()}/${x.getMonth() + 1}`;
-  if (DATE_FMT === 'mdy') return `${x.getMonth() + 1}/${x.getDate()}`;
   return `${x.getMonth() + 1}月${x.getDate()}日`;
 }
 
 /**
  * 选项卡标题用的短日期：今天 / 昨天 / 前天 / M月D日（跨年补年份）。
  * 第 173 条：同一天只开一个 tab，标题必须让人一眼看出是哪天。
+ *
+ * 三种语言都要有「昨天 / 前天」这两个词，否则日语界面下 tab 标题
+ * 会突然蹦出中文「昨天」。
  */
 export function shortDateLabel(date: string, today = todayKey()): string {
-  if (date === today) return '今天';
-  if (date === shiftDay(today, -1)) return '昨天';
-  if (date === shiftDay(today, -2)) return '前天';
+  if (date === today) return dayWord('今天');
+  if (date === shiftDay(today, -1)) return dayWord('昨天');
+  if (date === shiftDay(today, -2)) return dayWord('前天');
   const d = parseKey(date);
   const t = parseKey(today);
-  const md = `${d.getMonth() + 1}月${d.getDate()}日`;
-  return d.getFullYear() === t.getFullYear() ? md : `${d.getFullYear()}年${md}`;
+  const sameYear = d.getFullYear() === t.getFullYear();
+  if (!sameYear) return fmtDate(d);
+  return fmtMonthDay(d, LANG);
 }
 
 /** 现在几点（HH:mm），番茄钟/勿扰判断用。12 小时制时返回 H:mm AM/PM */
@@ -170,16 +220,25 @@ export function nowHM(): string {
 
 /**
  * 第 106 条：按用户设置格式化时刻。
- * 24 小时制 → 21:05；12 小时制 → 下午 9:05（中文习惯不用 AM/PM 缩写）。
+ *
+ * 24 小时制几乎所有语言都一样（21:05）。12 小时制的「上午/下午」标法
+ * 各语言不同，硬用中文会变成「PM 9:05」这种半截：
+ *   zh 下午 9:05     ja 午後9:05（日语不空格）
+ *   en 9:05 PM（英文把标记放后面）    de 21:05 不出 12 小时制（德语日常不用 AM/PM）
+ *
+ * 德语特例：德语日常口语就是 24 小时制，即使界面开了「12 小时制」
+ * 也不该把 21:05 写成「9:05 nachm.」—— 那不是德语的说法。直接返回 24 小时制。
  */
 export function fmtHM(hhmm: string): string {
   if (!HOUR12) return hhmm;
+  if (LANG.startsWith('de')) return hhmm;
   const [h0, m] = hhmm.split(':');
   const h = Number(h0);
   if (!Number.isFinite(h)) return hhmm;
-  const ap = h < 12 ? '上午' : '下午';
   const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${ap} ${h12}:${m}`;
+  if (LANG.startsWith('en')) return `${h12}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+  if (LANG.startsWith('ja')) return `${h < 12 ? '午前' : '午後'}${h12}:${m}`;
+  return `${h < 12 ? '上午' : '下午'} ${h12}:${m}`;
 }
 
 /**
@@ -187,7 +246,13 @@ export function fmtHM(hhmm: string): string {
  * 第 106 条：用户还可以在设置里手动选顺序（选了就以用户为准）。
  *
  * 优先级：用户手选（DATE_FMT 不是 ymd 时） > 语言默认。
- * 语言默认：zh 用「2026年10月26日」，en 用「10/26/2026」。
+ *
+ * 语言默认（加日德时逐条查过习惯写法，不是简单套用英文）：
+ *   zh-Hans 2026年10月26日
+ *   ja      2026年10月26日   ← 和中文同形。日语也用「年月日」，别改成斜杠
+ *   en      10/26/2026       ← 月日年
+ *   de      26.10.2026       ← **日月年 + 点号**。德语不用斜杠，写成 26/10/2026
+ *                              虽然看得懂，但明显不像德国人写的日期
  *
  * lang 传空 → 直接按用户设置来，不看语言（老调用点都是这么用的）。
  */
@@ -197,22 +262,39 @@ export function fmtDate(d: Date | string, lang?: string): string {
   const m = x.getMonth() + 1;
   const day = x.getDate();
 
+  /* 德语固定「日月年 + 点号」，且**不受 ymd 默认值影响** ——
+     德语里不存在「年月日」这种顺序，硬套 ymd 会输出 26. Okt 之外的怪东西 */
+  const isDe = !!lang && lang.startsWith('de');
+  if (isDe && DATE_FMT === 'ymd') return `${pad(day)}.${pad(m)}.${y}`;
+
   const userPicked = DATE_FMT !== 'ymd';
   const isEn = !!lang && lang.startsWith('en');
   const order = userPicked ? DATE_FMT : (isEn ? 'mdy' : 'ymd');
-  const sep = order === 'ymd' ? (isEn ? '/' : '') : '/';
+  /* 德语在用户手选时也用点号，其它语言用斜杠 */
+  const sep = isDe ? '.' : (order === 'ymd' ? (isEn ? '/' : '') : '/');
 
   if (order === 'dmy') return `${pad(day)}${sep}${pad(m)}${sep}${y}`;
   if (order === 'mdy') return `${pad(m)}${sep}${pad(day)}${sep}${y}`;
   return `${y}年${m}月${day}日`;
 }
 
-/** 短日期（不带年）：中文 10月26日 / 英文 10/26 */
+/**
+ * 短日期（不带年）。
+ *
+ * 四种语言写法各不相同，不能只有「中文 / 英文」两分支：
+ *   zh  10月26日    ja  10月26日（同形）
+ *   en  10/26       de  26.10.
+ *
+ * 德语末尾那个点是德语日期的固定写法（26.10. = 26. Oktober），
+ * 少了它就不像德语。
+ */
 export function fmtMonthDay(d: Date | string, lang = 'zh'): string {
   const x = typeof d === 'string' ? parseKey(d) : d;
   const m = x.getMonth() + 1;
   const day = x.getDate();
-  return lang.startsWith('en') ? `${pad(m)}/${pad(day)}` : `${m}月${day}日`;
+  if (lang.startsWith('de')) return `${pad(day)}.${pad(m)}.`;
+  if (lang.startsWith('en')) return `${pad(m)}/${pad(day)}`;
+  return `${m}月${day}日`;
 }
 
 /**
@@ -231,9 +313,23 @@ export function fmtYearMonth(ym: string | Date, lang = 'zh'): string {
     if (!a[0] || !a[1]) return String(ym);
     y = a[0]; m = a[1];
   }
+  /* 德语：Oktober 2026 —— 用月份名，不用数字。德语里「10/2026」读起来像分数 */
+  if (lang.startsWith('de')) return `${DE_MONTHS[m - 1] || m} ${y}`;
   if (lang.startsWith('en')) return `${pad(m)}/${y}`;
   return `${y}年${m}月`;
 }
+
+/**
+ * 德语月份名。
+ *
+ * 德语日期和英文不同，月份习惯**写全名**而不是数字 ——
+ * 「26. Oktober 2026」是标准写法，「26.10.2026」只在表格里用。
+ * 年份刻度这种需要短的地方用数字月份，其它地方用这个名字。
+ */
+const DE_MONTHS = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
 
 /**
  * 「距离下次轮换还有多久」这类相对时长，以及设置页里那句「当前时区」的说明。

@@ -332,6 +332,22 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             EnsureColumn("todos", "trashed", "INTEGER DEFAULT 0");
             EnsureColumn("todos", "sort", "INTEGER DEFAULT 0");
             EnsureColumn("habit_logs", "note", "TEXT DEFAULT ''");
+            /*
+             * countdowns.sort 是同一个坑，而且已经真的踩了：
+             *
+             * 第 306 行在主键迁移**之前**补 sort，而迁移用的列清单里没有 sort
+             * （见 MigrateIdsToText 的 targets）—— 于是补完立刻被整表重建吃掉。
+             * 全新装机的用户一打开倒计时就 `no such column: sort`，
+             * 因为 Countdowns() 的 ORDER BY 里带着它。
+             *
+             * 老库看不见：它们早就迁成 TEXT 主键了，MigrateIdsToText 直接 continue，
+             * 重建根本不发生，第 306 行补的列得以存活。
+             * 这个 bug 只在「新装 / 删档重来 / 换机器」时现形 —— 和 v13 罐子那次一模一样。
+             *
+             * 两处都改了：重建清单补上列 + 这里再兜一次底。
+             * 兜底这行才是真正护航新老两条路径的那一道，别删。
+             */
+            EnsureColumn("countdowns", "sort", "INTEGER DEFAULT 0");
             // v7：备忘录 / 用户 / 密码 / 缓存 / 节日。同样放在主键迁移之后
             EnsureV7();
             // v8：总结留存 / 密码提示与密保 / 回顾聚合。顺序同样必须在主键迁移之后
@@ -377,8 +393,8 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                  "id TEXT PRIMARY KEY,title TEXT,done INTEGER DEFAULT 0,due TEXT DEFAULT '',due_time TEXT DEFAULT '',priority INTEGER DEFAULT 1,note TEXT DEFAULT '',created_at TEXT,done_at TEXT,sort INTEGER DEFAULT 0,list_id TEXT DEFAULT '',trashed INTEGER DEFAULT 0,rev INTEGER DEFAULT 1,updated_at TEXT DEFAULT '',deleted_at TEXT DEFAULT NULL",
                  "lower(hex(randomblob(8))),title,done,due,due_time,priority,note,created_at,done_at,sort,'',0,1,IFNULL(created_at,''),NULL"),
                 ("countdowns",
-                 "id TEXT PRIMARY KEY,title TEXT,date TEXT,yearly INTEGER DEFAULT 0,color TEXT DEFAULT '#b8623a',note TEXT DEFAULT '',rev INTEGER DEFAULT 1,updated_at TEXT DEFAULT '',deleted_at TEXT DEFAULT NULL",
-                 "lower(hex(randomblob(8))),title,date,yearly,color,note,1,'',NULL"),
+                 "id TEXT PRIMARY KEY,title TEXT,date TEXT,yearly INTEGER DEFAULT 0,color TEXT DEFAULT '#b8623a',note TEXT DEFAULT '',rev INTEGER DEFAULT 1,updated_at TEXT DEFAULT '',deleted_at TEXT DEFAULT NULL,sort INTEGER DEFAULT 0",
+                 "lower(hex(randomblob(8))),title,date,yearly,color,note,1,'',NULL,0"),
                 ("pomodoro",
                  "id TEXT PRIMARY KEY,date TEXT NOT NULL,ts TEXT,minutes INTEGER DEFAULT 25,kind TEXT DEFAULT 'focus',task TEXT DEFAULT '',rev INTEGER DEFAULT 1,updated_at TEXT DEFAULT '',deleted_at TEXT DEFAULT NULL",
                  "lower(hex(randomblob(8))),date,ts,minutes,kind,task,1,IFNULL(ts,''),NULL")

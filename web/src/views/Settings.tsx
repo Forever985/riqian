@@ -827,7 +827,7 @@ function LayoutSection() {
         />
       </Row>
 
-      <Row label="语言" sub="中文是默认；英文已覆盖界面骨架，正文仍为中文" kw="语言 多语言 英文 中文 language">
+      <Row label="语言" sub="中文是默认；英文 / 日语 / 德语已覆盖界面骨架" kw="语言 多语言 英文 日语 德语 中文 language i18n">
         <Chips
           value={String(settings.language || 'zh-Hans')}
           items={LANGS.map((l) => [l.k, l.n] as [string, string])}
@@ -838,8 +838,12 @@ function LayoutSection() {
         <button className="btn sm" onClick={() => void useStore.getState().go('profile')}>去填写 →</button>
       </Row>
       <div className="small muted" style={{ marginTop: 6, lineHeight: 1.9 }}>
-        英文覆盖的是界面骨架：29 个页面标题、导航项、设置分组、常用按钮。
+        覆盖的是界面骨架：29 个页面标题、导航项、设置分组、常用按钮、状态词。
         正文、长提示和说明文字仍是中文 —— 半截翻译比不翻译更难看，所以先立骨架再铺量。
+        <br />
+        日期写法会跟着语言变：中文「2026年10月26日」、英语「10/26/2026」、
+        日语「2026年10月26日」、德语「26.10.2026」。德语因为词长，侧栏会自动放宽一点。
+        <br />
         后续计划：{PLANNED_LANGS.join(' · ')}。
       </div>
     </div>

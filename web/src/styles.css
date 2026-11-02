@@ -326,16 +326,31 @@ h1,h2,h3,h4{margin:0;font-weight:600}
 /* 确认框正文：允许换行（后果说明常常是两句话），且不要继承标题的字重 */
 .cfm-body{font-size:13.5px;line-height:1.85;color:var(--ink2);white-space:pre-line}
 /* 第 87 条 —— 用户点名的那一个：
-   「在"联系我们"中，"用模板"这个按钮没有体现出是个按钮。」
-   根因就是这一行的 border-color:transparent：ghost 本意是"次要操作"，
-   但把边框也抹掉之后，它连"按钮"这个身份都没了，看着就是一句普通文字。
-   ghost 该有的是"弱"，不是"看不见" —— 保留无实心背景，
-   补一层比 --line 更淡的轮廓，让它够低调但仍是个按钮。
-   全站 118 处 ghost 都会跟着修好，不用一处处改 TSX。 */
+   「在"联系我们"中，"用模板"这个按钮没有体现出是个按钮。举一反三…」
+
+   根因不是颜色深浅，是**边框根本没画出来**：原来是
+       border-color: color-mix(in srgb, var(--ink) 8%, transparent)
+   8% 的墨色在 --panel 上算出来是 rgba(38,34,29,.08) —— 浅色主题下肉眼看不见，
+   深色主题更是直接沉进背景。于是 ghost 按钮只剩一团 --ink2 的字，
+   跟旁边的说明文字长得一模一样，用户根本不知道它可以点。
+
+   这里给两层：
+     1) 边框提到 18%：跟 --line（≈12~20%）同一量级，是"有边"的最低可感知线，
+        还比 .btn 的 --line 略轻，层次没乱；
+     2) 补 3% 的极浅底：几乎看不出颜色，但让边框内形成一个"块"。
+        纯粹的描边在密集工具栏里会被当成分隔线，有个底才像控件。
+   深色主题不用另写 —— var(--ink) 本来就跟着主题反色，同一行代码自动适配。
+
+   注意：这是**唯一**一处 .btn.ghost 的静默态定义。
+   全部 123 处 ghost 调用点都吃这一条，不需要改 TSX。 */
 .btn.ghost{
-  background:transparent;color:var(--ink2);
-  border-color:color-mix(in srgb,var(--ink) 8%,transparent);
+  background:color-mix(in srgb,var(--ink) 3%,transparent);color:var(--ink2);
+  border-color:color-mix(in srgb,var(--ink) 18%,transparent);
 }
+/* hover 只写一次。以前第 2142 行还有一条
+   `.btn.ghost:hover{background:var(--panel2);border-color:var(--line)}`，
+   靠源码顺序把这里的 accent 边框整个盖掉 —— hover 反馈反而比静默态更灰。
+   那条已删除，别再往后面加同选择器的规则。 */
 .btn.ghost:hover{background:var(--tap-hi);color:var(--ink);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .btn.sm{padding:4px 9px;font-size:12.5px;border-radius:7px}
 .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
@@ -2139,7 +2154,11 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 
 /* 87：所有"能点"的东西都要看得出来能点 */
 .chip:not(.on):hover{border-color:var(--accent);color:var(--ink)}
-.btn.ghost:hover{background:var(--panel2);border-color:var(--line)}
+/* 这里本来有一条 `.btn.ghost:hover{background:var(--panel2);border-color:var(--line)}`，
+   把第 339 行那条带 accent 的 hover 按源码顺序盖掉了 —— 结果 ghost 按钮**悬停时**
+   反而从「有底有边」退回到「灰底灰边」。
+   已删。.btn.ghost 的静默态 / hover 态各自只留一处定义，就在 .btn 家族那一段。
+   同选择器的规则不要散落在文件后面，CSS 没有"就近覆盖"，只有"后写的赢"。 */
 /* 第 87 条「举一反三」的中招点：这里原本有一整行 hover 变色。
  *
  * 但 .set-row 是个 <div> 容器（见 components/SetRow.tsx），它本身点不动 ——
@@ -3749,3 +3768,187 @@ html[data-appbg] :is(.dnav, .nbook, .nrow, .rail-item, .snav, .mod-tools button,
 @media (max-width:900px){
   .topbar .topbar-lock .lb{display:none}
 }
+
+/* ==========================================================================
+ * 第 56 条：多语言（日语 / 德语）的 UI 适配
+ * --------------------------------------------------------------------------
+ * 中文是最"省地方"的语言：两个字就能表达一个完整概念（设置、打卡、统计）。
+ * 换成德语，同一个概念要 12-19 个字母；日语虽然也不长，但它**不用空格分词**。
+ * 这带来三类完全不同的排版问题，下面逐类处理。
+ *
+ * 所有规则都挂在 `html[lang^=...]` 上，不改变中文布局一个像素 ——
+ * 语言切换只走属性变化，不需要 React 重新算样式。
+ * ========================================================================== */
+
+/* ---- 1. 断行策略 ----
+ *
+ * 西文（英/德）必须在**词边界**断行，长复合词靠 `hyphens` 或者
+ * `overflow-wrap:break-word` 兜底；中日文可以在任意字符间断。
+ *
+ * 反面教材：日语如果沿用西文那套「按词断」，一个没有空格的句子会被
+ * 当成一个巨大的"词"，直接撑破卡片。反之德语如果允许任意位置断，
+ * 「Benutzer|oberfläche」被从中间劈开会非常难读。
+ */
+html[lang^="zh"],html[lang^="ja"]{
+  word-break:normal;overflow-wrap:anywhere;line-break:strict;
+}
+html[lang^="en"],html[lang^="de"]{
+  word-break:normal;overflow-wrap:break-word;hyphens:auto;
+}
+/* 德语复合词极长，只在**确实放不下**时才劈开，平时宁可整体换行 */
+html[lang="de"]{hyphens:auto}
+
+/* ---- 2. 侧栏宽度 ----
+ *
+ * 218px 装不下 Einstellungen（13 字符）。这里把默认值抬到 248px。
+ *
+ * 注意：theme.ts 已经在 JS 里按「用户有没有手动拖过」算好了 --navw
+ * 并写成**内联样式**。内联样式优先级高于样式表，所以这条规则**只对
+ * 没被 JS 显式设置过的情况生效**（首帧、或渲染顺序靠前的瞬间）。
+ * 两处都写是有意的：JS 那份负责「尊重用户手调」，CSS 这份负责
+ * 「JS 还没跑起来的首帧不要跳一下」。
+ */
+html[lang="de"]{--navw:248px}
+
+/* 导航标签本身：德语允许在复合词内部断行，否则只剩省略号 */
+html[lang="de"] .nav button .lb{
+  white-space:normal;overflow-wrap:break-word;line-height:1.3;
+}
+/* 日语不需要断词，但行高要略放宽 —— 假名的字形比汉字矮，同字号更挤 */
+html[lang^="ja"] .nav button .lb{line-height:1.35}
+
+/* ---- 3. 按钮与 chip ----
+ *
+ * 中文按钮两三个字，`padding:7px 14px` 刚好。德语「Wiederherstellen」
+ * 16 个字母会撑得比旁边的按钮高一倍。对策不是全部加宽（中文会变胖），
+ * 而是**允许两行 + 稍收水平内边距**，让长按钮自己长高而不是撑破容器。
+ */
+html[lang="de"] button{
+  overflow-wrap:break-word;
+}
+html[lang="de"] .chip{padding-left:9px;padding-right:9px}
+html[lang="de"] .btn.sm{padding-left:9px;padding-right:9px}
+
+/* 顶栏标题：德语 Seitentitel 可长可短，别让 h2 把顶栏撑出横向滚动 */
+html[lang="de"] .topbar h2{min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- 4. 字体栈 ----
+ *
+ * 语言相关的字体栈**不在 CSS 里**，在 lib/theme.ts 的 applyAppearance()。
+ *
+ * 为什么：--font 是靠 html.style.setProperty() 写上去的，那是内联样式，
+ * 优先级压过任何选择器。这里就算写 `html[lang="ja"]{--font:...}` 也一行不生效
+ * —— 实测过，日语界面拿到的仍是微软雅黑。
+ *
+ * 那为什么会错：微软雅黑带一套「中文化」的假名字形，
+ * 日本人一眼能看出「这不是日文字体」（比如 直 / 骨 的字形差异）。
+ * 这个判断没法用 CSS 表达，只能跟着 lang 在 JS 里选 —— 见 theme.ts 里的 fallbackFont。
+ */
+
+/* ---- 5. 日期与数字 ----
+ *
+ * 德语日期带点号（26.10.），比斜杠宽一点点。日历格子里是均分宽度，
+ * 稍微给一点 letter-spacing 的负值，避免 31.12. 这种把格子挤到换行。
+ */
+html[lang="de"] .cal-grid .d,html[lang="de"] .calcell{letter-spacing:-.01em}
+
+/* ==========================================================================
+ * 第 84b 条：把缺的 hover 补齐（第二批）
+ * --------------------------------------------------------------------------
+ * 方法：脚本扫出全部 `cursor:pointer` 的选择器，减去已经有 `:hover` 的，
+ * 再逐个人工核对 —— 脚本会把注释块也当成选择器，所以人工过了一遍，
+ * 下面这 13 个是**确实可点、但鼠标移上去毫无反馈**的。
+ *
+ * 统一用的三个 token（跟项目里已有的按钮保持一致，不新造视觉语言）：
+ *   --tap-hi    浅底，用于"整块可点"的行/卡片
+ *   --accent    color-mix 出淡边框，用于"有轮廓"的控件
+ *   --ink       文字从 --ink2 提亮到 --ink，用于纯文字型目标
+ *
+ * 原则：**不加动效、不加位移**。整站只有一个 0.13s 的 transition 基调，
+ * 突然来个 scale 或者 translateY 会显得跟别处不是同一个程序。
+ * ========================================================================== */
+
+/* ---- 勾选框：待办 / 打卡 / 评分星 ----
+ * 这三个是"最高频点击"的目标，却一个都没有 hover。用户点一下要确认
+ * "我点的是这个框吗"，靠边框变色给即时确认。
+ */
+.todo-row .ck:hover,
+.hchk:hover{
+  border-color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent);
+}
+/* 已完成的框已经是实色了，hover 时不能再盖底色，只加深边框 */
+.todo-row.done .ck:hover,
+.hchk.on:hover{
+  border-color:var(--accent2);
+  background:var(--accent2);
+}
+/* 评分星：未点亮的星星是 --line 色，鼠标扫上去预览成强调色 —— 
+   这比"点完才知道选了几颗"清晰得多 */
+.stars:hover{color:var(--accent)}
+.stars span:hover{color:var(--accent2)}
+
+/* ---- 分段控件（seg-b） ----
+ * 它是"排序方式"那排小按钮，静止时完全透明。已选中的有 .on 底色，
+ * 未选中的扫上去必须能看出"我可以点"。
+ */
+.seg-b:hover{background:var(--tap-hi);color:var(--ink)}
+/* 已选中的不要因为 hover 反而变淡 —— 选中态要始终压过 hover */
+.seg-b.on:hover{background:var(--panel);color:var(--ink)}
+
+/* ---- 颜色圆点（倒计时配色 / 画板色） ----
+ * 小圆点本身只有 18px，边界感很弱，给一圈柔和外扩比改填充色更明显。
+ */
+.cdot:hover{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+
+/* ---- 托盘行为勾选项 ----
+ * 整行是一个 checkbox 容器，静止有边框，hover 应该整个亮起来，
+ * 而不是只有里面的小方框有反应。
+ */
+.tray-item:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:var(--tap-hi)}
+
+/* ---- 分享卡片的开关方块 ----
+ * 它是"要不要导出成图片"的开关，四个并排。hover 时边框要指向主色，
+ * 否则用户分不清自己正要选哪一个。
+ */
+.share-sw:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line2))}
+
+/* ---- 密保问题行 / 快速跳转行 ----
+ * 都是"整行可点、静止透明"的列表项，跟 .nav button 同一类目标。
+ * 用同一个 --tap-hi 底色，保证体感一致。
+ */
+.qrow:hover{background:var(--tap-hi);color:var(--ink)}
+
+/* ---- 热力图格子 ----
+ * 格子只有 1 个字符大，且颜色表达的是"活跃度"。hover 时**不能**改填充色 ——
+ * 那会被误解成"这一格的数据变了"。改成描边，只表达"鼠标在这里"。
+ */
+.heat-c:hover{outline:1.5px solid var(--accent);outline-offset:1px}
+
+/* ---- 字体预览缩略图 ----
+ * 白底图片块，hover 时给个轻投影让它"浮"一点，暗示可点开大图。
+ */
+.db-thumb:hover{box-shadow:var(--shadow)}
+
+/* ---- 色相条 ----
+ * 高度只有 12px，加高会挤动布局。改成让那个拖动小圆点变实心一点。
+ */
+.cp-hue:hover .cp-hue-dot{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
+
+/* ---- 标签芯片的主按钮区 ----
+ * 芯片分成"文字"和"✕"两半。原来只有整个芯片的一层 hover，
+ * 鼠标在 ✕ 上和在文字上长得一样，容易误删。分开给。
+ */
+.pchip .pc-main:hover{background:var(--tap-hi);border-radius:20px 0 0 20px}
+
+/* ---- 颜色选择器里那个原生色块 ----
+ * input[type=color] 的默认 hover 几乎没有视觉变化（就是个直角方块），
+ * 给一圈主色描边，跟旁边的数字输入框区分开。
+ */
+.rgbrow input[type=color]:hover{border-color:var(--accent);box-shadow:0 0 0 2px var(--accentSoft)}
+
+/* ---- 总结页的历史条目 ----
+ * 一整行可点，但它是"读"为主的区域，hover 不能太重 ——
+ * 用最浅的底色 + 文字提亮就够，加边框会显得像按钮。
+ */
+.sum-hist .h-main:hover{background:var(--tap-hi);color:var(--ink)}
