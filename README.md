@@ -15,9 +15,33 @@
 
 技术上：**一个 WinForms 窗口 + 内嵌 WebView2 渲染界面 + SQLite 存数据 + 单文件 exe 分发**。
 
-当前版本 **v12.8**。
+当前版本 **v12.9.5**。
 
 ---
+
+## 界面
+
+![今日](docs/screenshots/today.png)
+
+![待办](docs/screenshots/todos.png)
+
+| 日历回顾 | 专注统计 |
+|---|---|
+| ![日历](docs/screenshots/calendar.png) | ![统计](docs/screenshots/stats.png) |
+
+![模块模板](docs/screenshots/templates.png)
+
+---
+
+## 下载即用
+
+不想自己编译的话，去 [Releases](../../releases) 下载 `Riqian.exe`，**双击就能跑**。
+
+绿色版，没有安装程序，不写注册表。第一次启动会让你选数据目录（默认 `E:\日签\`，
+E 盘不存在就落到「我的文档\日签日记」）。想卸载直接删 exe，数据目录留着就是全部数据。
+
+> 需要 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)：
+> Win11 自带，Win10 大部分也自动装过，真缺了程序会提示你去装。
 
 ## 自己编译
 
@@ -30,7 +54,7 @@
 | WebView2 Runtime | 任意近代版本 | Win11 自带；Win10 可能需要[单独装](https://developer.microsoft.com/microsoft-edge/webview2/) |
 
 ```bash
-git clone <你的仓库地址>
+git clone https://github.com/Forever985/riqian4.git
 cd riqian4
 
 # 1. 构建前端（产物是 wwwroot/index.html，会被嵌进 exe）
@@ -136,9 +160,6 @@ riqian4/
 
 ## 许可证
 
-<!--
-  换成你实际想要的许可证。如果没有特别考虑，MIT 最省事：
-  别人可以自由使用、修改、再分发，你也不用承担责任。
-  商用了想保留版权声明就 MIT，想要求衍生作品也开源就 GPL-3.0。
--->
-许可证待定。在正式确定之前，保留所有权利。
+[MIT](LICENSE) © Forever985
+
+随便用、随便改、可以商用，保留版权声明就行，出了问题别找我。

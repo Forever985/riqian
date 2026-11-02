@@ -25,11 +25,23 @@ web/dist/
 # 测试脚本的 node_modules（Playwright）。14 MB，靠 npm i 还原
 tests/node_modules/
 
+# 探针跑出来的截图和临时 id 文件。
+# 这些是 e2e 脚本的正常输出（p.screenshot({path:'x-flow.png'})），
+# 每次跑都会重新生成，没有一个是脚本的输入或文档的配图。
+# 早年它们被提交进仓库，1.8 MB，还带出一个 tests/tests/ 嵌套目录
+# （脚本用相对路径跑多套了一层）。公开仓库里不该有这些东西。
+tests/*.png
+tests/_shot-*
+tests/tests/
+
 # 本地 publish 出来的 dist，CI 会自己构建，不该进仓库
 publish/
 
 # 需求核对过程中的中间产物（.tsv/.json/txt 分析结果），属于工作笔记
 .audit/
+
+# 机器生成的中间结果，不是文档。要用的时候重新跑扫描脚本即可
+docs/_func_scan.json
 
 # 本机发布/备份脚本（含绝对路径，别人用不上）
 tools/prune-backup.sh

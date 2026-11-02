@@ -12,7 +12,18 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
-    <Version>5.0.0</Version>
+    <!--
+      版本号只有一个来源就是这里，其它地方全部引用它：
+        · Diag.AppVersion 读 Assembly.GetName().Version（即下面的 Version）
+        · /health 接口报的就是这个值
+        · exe 右键属性「详细信息」看到的是 FileVersion
+      以前这里是 5.0.0，而界面更新日志写 12.9.5、README 写 v12.8 ——
+      三个数字互不相同，用户看属性看到一个版本、看更新日志又看到另一个。
+      统一到 12.9.5（跟 changelog 对齐）。改版本只改这一处。
+    -->
+    <Version>12.9.5</Version>
+    <FileVersion>12.9.5.0</FileVersion>
+    <AssemblyVersion>12.9.5.0</AssemblyVersion>
     <Product>日签 · 打卡日记本</Product>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!--

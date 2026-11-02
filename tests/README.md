@@ -4,7 +4,7 @@
 （`cd tests && npm i playwright-core`，只连 CDP，不需要下载浏览器）。
 
 ```bash
-cd "C:/Users/18405/Apps/日签"
+cd "<你放日签的目录>"
 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=57001" ./日签.exe
 
 cd ../../WorkBuddy/.../riqian4/tests
