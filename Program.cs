@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,26 @@ namespace Riqian
         [STAThread]
         static void Main()
         {
+            /*
+             * `--selfcheck`：不开窗口，只验"全新装机的库能不能建对"。
+             *
+             * 必须放在**单实例互斥量之前**：CI 上可能同时有别的步骤在跑，
+             * 而且自检本来就不该受"用户已经开着一个日签"的影响 ——
+             * 它用的是独立的临时目录，跟用户数据一个字都不沾。
+             *
+             * 也必须放在 Application.Run 之前：这一步不需要 WebView2、
+             * 不需要桌面会话，纯命令行。CI 的 windows-latest 上能跑。
+             *
+             * 为什么要有这么个入口：见 SelfCheck.cs 顶部注释 —— 一天之内
+             * 两次"只打新装用户"的 no such column，都是发布出去才发现的。
+             */
+            if (Environment.GetCommandLineArgs()
+                .Any(a => string.Equals(a, "--selfcheck", StringComparison.OrdinalIgnoreCase)))
+            {
+                Environment.ExitCode = SelfCheck.Run();
+                return;
+            }
+
             // 日志要最先起。后面的任何一步都可能炸，越早起来能抓到的东西越多。
             Diag.Start();
             HookGlobalExceptions();

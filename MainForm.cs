@@ -135,6 +135,27 @@ namespace Riqian
 
         private static string ResolveRoot()
         {
+            /* `--data-root=<路径>`：临时指定数据目录，**一个字都不写配置文件**。
+             *
+             * 这是给自动化探针（tests/smoke-startup.ps1）和 CI 用的。
+             * 之前那版探针是"先备份 config.json → 改写 → 跑完还原"，两次事故：
+             *   ① ConvertTo-Json 把中文路径转义一次、写回时又按别的编码解释，
+             *      结果 E:\日签-abtest 变成了 E:\鏃ョ-abtest，配置直接坏掉
+             *   ② 万一探针进程被强杀，finally 不执行，用户的配置就永久停在临时目录上
+             * 改配置这种事，从一开始就不该让测试去做。
+             *
+             * 优先级最高、且直接 return —— 不走下面的"能不能建出来"判断，
+             * 也不参与 rewriteConfig 那套决策。给测试用的口子就该是纯粹的旁路。 */
+            foreach (var a in Environment.GetCommandLineArgs())
+            {
+                const string flag = "--data-root=";
+                if (a.StartsWith(flag, StringComparison.OrdinalIgnoreCase))
+                {
+                    var dir = a.Substring(flag.Length).Trim('"');
+                    if (dir.Length > 0) return dir;
+                }
+            }
+
             var fallback = Directory.Exists(@"E:\")
                 ? @"E:\日签"
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "日签日记");
@@ -747,6 +768,15 @@ namespace Riqian
                 }
             }
             catch { }
+
+            /* 关库必须放在 flush 之后：前端可能还在写最后一条（比如刚打完的卡），
+               先把界面那边的事等干净，再 checkpoint + 关连接。
+               
+               以前这里没有这一句，靠进程退出时 OS 回收 —— 后果是 WAL 从来没被
+               checkpoint 过，`日签.db-wal` 会一直涨（实机上见过 4 MB 的），
+               而且"拷走整个数据目录"会拿到一个不含最后几次写入的库。 */
+            try { db?.Dispose(); } catch (Exception ex) { Diag.Warn("app.exit", "关闭数据库时出错", ex); }
+
             Close();
         }
     }

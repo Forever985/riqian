@@ -41,8 +41,12 @@ jobs:
         # 这条命令内部包含 tsc --noEmit，类型错误会在这里就失败
         run: npm run build
 
-      # 产物大小有一道硬上限：NavigateToString 时代留下的 2 MB 约束
-      # （现在走虚拟主机映射已经没有这个限制，但保持体积可控是好事）
+      # 产物大小有一道硬上限。
+      #
+      # 2 MB 是 NavigateToString 时代留下的约束 —— 那个 API 有 UTF-16 硬上限，
+      # 超过 1.5 MB 字符就抛 E_INVALIDARG。现在改走虚拟主机映射，已经没有这个限制。
+      # 所以阈值放到 4 MB，留出增长空间，同时保留一个"别把大资源误内联进来"的哨兵。
+      # 当前实际约 1.48 MB。
       - name: 检查产物体积
         shell: pwsh
         run: |
@@ -61,8 +65,79 @@ jobs:
         run: dotnet build -c Debug --no-restore
 
       # ---------- 发布 ----------
+      # 这里**故意不加** --no-restore。
+      # -r win-x64 的还原图和前面那条不带 RID 的 dotnet restore 不是同一份，
+      # 即使目标是 net8.0-windows，也会去拉 win-x64 的运行时包。
+      # 加了 --no-restore 在干净环境里会报 NETSDK1047（资产文件缺目标），
+      # 省那几秒不值当。
       - name: 发布单文件 exe
         run: dotnet publish -c Release -r win-x64 --self-contained true -o publish
+
+      # ---------- 全新装机自检 ----------
+      #
+      # 「发布成功」不等于「能用」。2026-11-02 一天之内两次踩到同一个坑：
+      #   ① EnsureV13 只在罐子接口里懒调用，没进启动迁移链
+      #   ② countdowns.sort 在整表重建之前补，被重建吃掉
+      # 两次都是「新装第一天就 no such column」，而开发者本地永远复现不了
+      # （老库早已升级完毕，根本不会触发那条重建路径）。
+      #
+      # 所以这一步必须存在：拿**刚发布的那个 exe**，开一个空临时库，走完整迁移链，
+      # 逐列核对表结构 + 真跑几条最吃 schema 的读取。不需要 WebView2，
+      # 不需要桌面会话，纯命令行 —— windows-latest 上能稳定跑。
+      #
+      # 它抓不住的问题：界面层的、交互层的。那些靠下面那步 + 本地探针（tests/*.js）。
+      # 它专治的问题：**只打新用户的 schema 漂移**。这类 bug 一旦发出去，
+      # 用户第一次打开就是满屏报错，而我们自己怎么测都测不出来。
+      - name: 全新装机自检
+        shell: pwsh
+        run: |
+          # 统一控制台编码，否则中文在 CI 日志里是乱码
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $env:PYTHONIOENCODING = 'utf-8'
+
+          & ./publish/Riqian.exe --selfcheck
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "全新装机自检失败（退出码 $LASTEXITCODE）。看上面哪张表缺哪一列。"
+            exit 1
+          }
+
+      # ---------- 启动冒烟 ----------
+      #
+      # 上一步只验「库建对了」，它不起界面、不走 RPC 分发。
+      # 而上面那两个 bug 的现形方式恰恰是「调某个接口才 500」——
+      # 库结构对了，接口照样炸。这一步真的把 exe 跑起来：
+      #   起进程 → 等 /health → 拿 token → 打 10 个只读 RPC → 查日志有没有 ERROR → app.quit 退出
+      #
+      # 用 `--data-root=` 指到临时目录，**不碰 %APPDATA%\Riqian\config.json**。
+      # （早期版本是改写配置再还原，结果把中文路径写坏成 E:\鏃ョ-abtest，
+      #   而且探针被强杀时 finally 不执行，配置会永久停在临时目录上。
+      #   测试不该有权限动用户配置，所以为此专门加了 --data-root 参数。）
+      #
+      # 反向验证过：把 countdowns.sort 的两处修复撤掉后重跑，
+      # 这一步输出 `rpc cd.list -> no such column: sort`、退出码 1，准确拦住。
+      - name: 启动冒烟
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+          # WebView2 运行时是硬依赖：程序启动时会 CreateAsync，缺了就直接进 catch，
+          # 调试网关跟在后面，于是也没起来 —— 探针只会看到"等不到 /health"。
+          # windows-latest 镜像默认带（Edge Chromium），但镜像也会变，
+          # 所以这里先探一下，缺了就把问题说清楚，而不是让它表现成一个莫名的超时。
+          $wv = "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application"
+          if (Test-Path $wv) {
+            $ver = (Get-ChildItem $wv -Directory | Where-Object { $_.Name -match '^\d+\.' } |
+                    Sort-Object Name -Descending | Select-Object -First 1).Name
+            Write-Host "WebView2 运行时: $ver"
+          } else {
+            Write-Warning "没装 WebView2 运行时（$wv 不存在）。下一步大概率卡在等 /health。"
+          }
+
+          & ./tests/smoke-startup.ps1 -Exe ./publish/Riqian.exe
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "启动冒烟失败（退出码 $LASTEXITCODE）。上面标 x 的就是挂掉的接口。"
+            exit 1
+          }
 
       - name: 上传 exe
         uses: actions/upload-artifact@v4

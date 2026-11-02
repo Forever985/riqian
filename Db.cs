@@ -17,7 +17,7 @@ namespace Riqian
     /// <summary>
     /// 全部数据落在 SQLite 单文件里。模块、日记、版本、标签、待办、倒计时、习惯、关联都在一张库中。
     /// </summary>
-    public partial class Db
+    public partial class Db : IDisposable
     {
         public string Root { get; private set; }
         public string DbPath { get; private set; }
@@ -71,7 +71,18 @@ namespace Riqian
             foreach (var d in new[] { Root, MediaDir, BackupDir, ExportDir })
                 Directory.CreateDirectory(d);
 
-            conn = new SqliteConnection("Data Source=" + DbPath);
+            /* Pooling=False 是必须的，不是为了性能取舍。
+             *
+             * Microsoft.Data.Sqlite 默认开连接池，`Close()` / `Dispose()` 只是把
+             * 物理连接**归还池子**，文件句柄还留在进程里。于是：
+             *   · 自检跑完删不掉临时目录（riqian.db 一直被占着，-shm 也留着）
+             *   · DailyBackup 里 `conn.Close()` → File.Copy → `conn.Open()` 那个
+             *     "先关掉再拷"的假设根本不成立 —— 拷贝时文件其实还开着
+             *
+             * 全局只有一处主连接（MainForm 一个 Db，SelfCheck 一个 Db，不同时存在），
+             * 池化本来就是白拿的收益：省不下一次真的 open，却让"关掉"变成谎话。
+             * 关掉它，`Dispose()` 才是真的闭嘴。 */
+            conn = new SqliteConnection("Data Source=" + DbPath + ";Pooling=False");
             conn.Open();
             Exec("PRAGMA journal_mode=WAL;");
             Exec("PRAGMA synchronous=NORMAL;");
@@ -79,6 +90,42 @@ namespace Riqian
             EnsureMilestones();   // 第 188 条：大事时间轴
             Seed();
             DailyBackup();
+        }
+
+        /// <summary>
+        /// 释放数据库连接。
+        ///
+        /// 这是 2026-11-02 做 `--selfcheck` 时补的，起因很具体：
+        /// 自检跑完要删掉临时库目录，结果 `Directory.Delete` 一直失败 ——
+        /// 因为 `Db` 从来没有关闭连接的地方，WAL 的 `-shm` / `-wal` 两个文件
+        /// 被 SqliteConnection 一直占着。**这不是自检的问题，是 Db 的问题**：
+        /// 一个持有连接的对象没有释放入口，谁用它谁就只能泄漏。
+        ///
+        /// 主程序里看不出后果 —— 进程退出时 OS 会回收，但那次 WAL 没做 checkpoint。
+        /// 单进程长跑的场景下也确实不需要手动关。但只要有第二个使用者
+        /// （自检、将来的备份工具、测试），就必须有这个方法。
+        ///
+        /// ⚠️ 关之前先做 checkpoint：WAL 模式下不 checkpoint 直接关，
+        /// 数据还在 -wal 里没并回主库，删目录/拷文件都会丢最后一次写入。
+        ///
+        /// ⚠️ 光调 Close/Dispose 是不够的 —— 连接池会接住物理连接，文件句柄不还。
+        /// 所以构造连接时写了 `Pooling=False`（见 Open()）。两处必须配套：
+        /// 只关池化不写 Dispose 浪费，只写 Dispose 不关池化是假关闭。
+        /// </summary>
+        public void Dispose()
+        {
+            if (conn == null) return;
+            try
+            {
+                // TRUNCATE 而不是 PASSIVE：把 WAL 并回主库并把 -wal 截成 0 字节，
+                // 这样关掉之后目录里只剩一个 .db，可以直接删或直接拷。
+                Exec("PRAGMA wal_checkpoint(TRUNCATE);");
+            }
+            catch { /* checkpoint 失败不该盖住后面的关闭 */ }
+
+            try { conn.Close(); } catch { }
+            try { conn.Dispose(); } catch { }
+            conn = null;
         }
 
         /* ---------------- 底层 ---------------- */
@@ -519,6 +566,11 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                 if (File.Exists(dst) || !File.Exists(DbPath)) return;
                 // WAL 模式下必须先 checkpoint，否则最新的写入还在 -wal 文件里，拷出来的库是旧的
                 try { Exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { }
+
+                /* ⚠️ 下面这一对 Close/Open 只有在 `Pooling=False` 时才有意义（见 Open()）。
+                   池化开着的话 Close 只是把物理连接还进池子，文件句柄没还，
+                   File.Copy 拷的是一个"还开着写"的库 —— 历史遗留的
+                   自动备份/riqian-2026-10-31.db-shm 就是那时候留下的。 */
                 conn.Close();
                 File.Copy(DbPath, dst, true);
                 conn.Open();
