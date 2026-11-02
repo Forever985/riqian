@@ -41,7 +41,15 @@ namespace Riqian
             }
         }
 
-        private static string ConfigDir
+        /// <summary>
+        /// 配置目录。便携模式判据的唯一实现就在 IsPortable 里。
+        ///
+        /// 为什么开 internal 而不是 public：DebugApi 要把 token 文件写到
+        /// 同一个目录（它以前硬编码 %APPDATA%，便携模式下就把文件落到
+        /// exe 外面去了）。给兄弟类开一个只读窄口子，比让它自己再猜一遍
+        /// 路径好 —— 两处判据迟早会分叉。
+        /// </summary>
+        internal static string ConfigDir
         {
             get
             {

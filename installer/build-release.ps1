@@ -133,7 +133,9 @@ Win11 自带，Win10 大部分也装过。真缺了程序会提示。
 https://github.com/Forever985/riqian4
 "@
     # 用无 BOM 的 UTF-8 —— Windows 记事本认得，带 BOM 反而在某些工具里露出来
-    [IO.File]::WriteAllText((Join-Path $portableStage '使用说明.txt'), $readme,
+    # 文件名用 ASCII：压缩包里的中文名在老版 Windows 资源管理器里
+    # 会按本地代码页解，有些机器上直接显示成乱码。内容还是中文，只是文件名避开这个坑。
+    [IO.File]::WriteAllText((Join-Path $portableStage 'HOWTO.txt'), $readme,
         (New-Object System.Text.UTF8Encoding($false)))
 
     $zip = Join-Path $relDir "Riqian-Portable-$ver.zip"

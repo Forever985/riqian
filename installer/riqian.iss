@@ -79,11 +79,15 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Filename: "{app}\{#AppExeName}"; Description: "立即运行 {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; 只删程序自己生成在安装目录里的东西。
-; 用户数据在 %APPDATA%\Riqian 或 E:\日签，**不在这里删**。
-; 但便携模式误装到 Program Files 的情况下，日签数据 会落在 {app} 下 ——
-; 那种情况删掉是对的（跟程序放一起就该跟程序走）。
-Type: filesandordirs; Name: "{app}\日签数据"
+; 一条规则都没有，这是故意的。
+;
+; 唯一想删的是「便携版误装到 Program Files 时，数据落在 {app}\日签数据」那种情况，
+; 但那和「用户手动把数据目录改到 {app}\日签数据」在磁盘上长得一模一样 ——
+; 卸载程序分辨不出来。分不清的后果是把人家几年的日记删掉。
+;
+; 权衡很清楚：留下一个空文件夹的代价是几十 KB 和"卸载不干净"的洁癖不适，
+; 删错一次的代价是用户永远的日记。**保用户数据，不保安装目录干净。**
+; 目录里如果有日签数据，卸载时由 Inno 默认行为处理（非空目录不会被自动删）。
 
 [Code]
 // 检测 WebView2 Runtime 是否已安装。

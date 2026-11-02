@@ -44,8 +44,19 @@ namespace Riqian
         public static bool IsRunning => _running;
         public static int Port => _port;
         public static string TokenForShow => _token;
+
+        /// <summary>
+        /// token 文件放哪。**必须和 MainForm.ConfigDir 用同一套判据**。
+        ///
+        /// 以前这里写死 %APPDATA%\Riqian，便携版（绿色版）启动后会把
+        /// debug-api.json 扔到 %APPDATA% 去 —— 用户「拷走文件夹就完整迁移」
+        /// 的承诺当场破了一半：数据在文件夹里，token 文件留在系统盘。
+        /// 更糟的是绿色版和安装版会互相覆盖这个文件，探针读到上一个进程的 token。
+        ///
+        /// 判据只能有一处（MainForm.IsPortable），这里复用，不自己再猜一遍路径。
+        /// </summary>
         public static string InfoFile =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Riqian", "debug-api.json");
+            Path.Combine(MainForm.ConfigDir, "debug-api.json");
 
         /// <summary>
         /// 启动网关。

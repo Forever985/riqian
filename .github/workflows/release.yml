@@ -1,0 +1,305 @@
+# 打 tag 就出三个包，自动挂到 GitHub Releases。
+#
+#   Riqian-Setup-x.y.z.exe     安装版（Inno Setup）
+#   Riqian-Portable-x.y.z.zip  绿色版（exe + portable.txt）
+#   Riqian-Source-x.y.z.zip    源码包（git archive，不含构建产物）
+#
+# 触发：推形如 v12.9.5 的 tag，或者手动点 Run workflow 并填版本。
+#
+# 为什么和 build.yml 分开：
+#   build.yml 是"每次提交都验一遍能不能编译"，几分钟内要出结果，跑得勤；
+#   release.yml 是"要发东西出去了"，跑得少但要求更高（要装机实测、要挂资产）。
+#   混在一起的话，日常提交也会跑 Inno Setup 安装和打包，纯浪费。
+#   两个工作流用同一套构建命令，靠 installer/build-release.ps1 保证口径一致。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不带 v，例如 12.9.5）。留空则从 csproj 读'
+        required: false
+        default: ''
+
+permissions:
+  # 要往 Releases 上传资产，必须给写权限。
+  # 从 2021 年起 GITHUB_TOKEN 默认只读，不显式声明会 403。
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build-release.ps1 用 git archive 打源码包，需要完整历史
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Inno Setup 在 windows-latest 上**没有预装**，得自己装。
+      # 用 choco 是因为它在 runner 上稳定，winget 在 CI 里偶尔会卡确认提示。
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          # choco 装的是机器级路径，和本地 winget 的用户级路径不同，两个都要找
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Error "装完还是找不到 ISCC.exe"; exit 1 }
+          Write-Output "ISCC: $iscc"
+
+      - name: 安装前端依赖
+        working-directory: web
+        run: npm ci
+
+      # 全部交给同一个脚本，本地和 CI 走完全相同的路径。
+      # 这样"本地能打出来、CI 打不出来"这种事不会发生。
+      - name: 构建三个包
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          ./installer/build-release.ps1 -InnoCompiler $iscc
+          if ($LASTEXITCODE -ne 0) { Write-Error "打包失败"; exit 1 }
+
+      # 装机实测。上面那步里的 --selfcheck 只验"库建得对"，
+      # 这里验"装完之后真的能起、能调接口"。
+      # 只在 CI 上跑 —— 它要往临时目录静默安装再卸载，本地跑会烦人。
+      - name: 安装包冒烟（装 → 起 → 卸）
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $ver = (Select-Xml -Path Riqian.csproj -XPath '//Version').Node.InnerText
+          $setup = "releases\Riqian-Setup-$ver.exe"
+          $target = Join-Path $env:TEMP "riqian-ci-install"
+
+          Write-Host "=== 静默安装到 $target ==="
+          $p = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "安装失败（退出码 $($p.ExitCode)）"; exit 1 }
+
+          # 安装版必须**没有** portable.txt，否则数据会跑到安装目录里去
+          if (Test-Path "$target\portable.txt") {
+            Write-Error "安装版不该带 portable.txt"
+            exit 1
+          }
+          Write-Host "OK 安装版无 portable.txt"
+
+          # 装出来的 exe 要能跑
+          & "$target\Riqian.exe" --selfcheck
+          if ($LASTEXITCODE -ne 0) { Write-Error "装完之后自检失败"; exit 1 }
+
+          # 卸载前造一份"用户数据"，验证卸载不会删它。
+          # 先清空再建：保证这个文件是 CI 自己造的、而且是目录里唯一的内容 ——
+          # 否则断言可能碰巧验到别的东西，测的就不是"卸载删不删数据"了。
+          $dataDir = "$target\日签数据"
+          if (Test-Path $dataDir) { Remove-Item $dataDir -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          "ci-diary" | Set-Content "$dataDir\riqian.db" -Encoding UTF8
+
+          Write-Host "=== 静默卸载 ==="
+          Start-Process -FilePath "$target\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait | Out-Null
+          Start-Sleep -Seconds 3
+
+          # 卸载**不能**删用户数据。这条如果红了，说明 riqian.iss 的
+          # [UninstallDelete] 又被加了删目录的规则 —— 那会删掉用户的日记。
+          if (-not (Test-Path "$target\日签数据\riqian.db")) {
+            Write-Error "卸载删掉了用户数据！检查 installer/riqian.iss 的 [UninstallDelete]"
+            exit 1
+          }
+          Write-Host "OK 卸载保留了用户数据"
+
+      # 绿色版也验一遍：解压 → 数据应该落在 exe 旁边
+      - name: 绿色版冒烟（解 → 起 → 查数据落点）
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $ver = (Select-Xml -Path Riqian.csproj -XPath '//Version').Node.InnerText
+          $zip = "releases\Riqian-Portable-$ver.zip"
+          $dir = Join-Path $env:TEMP "riqian-ci-portable"
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+
+          if (-not (Test-Path "$dir\portable.txt")) {
+            Write-Error "绿色版缺 portable.txt，便携模式不会生效"
+            exit 1
+          }
+
+          # 起进程前先给 %APPDATA%\Riqian 拍个快照。
+          #
+          # 为什么不直接断言「这个目录不该存在」：上一步的安装包冒烟已经
+          # 起过安装版（没有 portable.txt），它一定会把 %APPDATA%\Riqian 建出来。
+          # 到这一步目录本来就存在，"不该存在"必然误报，红灯会变成噪音，
+          # 以后真出问题就没人看它了。
+          # 正确问法是：**这次运行有没有动它**。所以比对前后快照。
+          function Get-AppDataSnapshot {
+            $p = "$env:APPDATA\Riqian"
+            if (-not (Test-Path $p)) { return "" }
+            (Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue |
+              Sort-Object FullName |
+              ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" }
+            ) -join "`n"
+          }
+          $appDataBefore = Get-AppDataSnapshot
+
+          # 起一次真实的进程，让它把数据目录建出来。
+          # 用 --debug-api 只是为了确认它起来了；数据落点靠查目录。
+          $proc = Start-Process -FilePath "$dir\Riqian.exe" -ArgumentList "--debug-api=58950" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            if ($proc.HasExited) { break }
+            try {
+              $h = Invoke-RestMethod -Uri "http://127.0.0.1:58950/health" -TimeoutSec 2 -ErrorAction Stop
+              if ($h.ok) { $ok = $true; break }
+            } catch { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $ok) { Write-Error "绿色版起不来"; exit 1 }
+          Write-Host "OK 绿色版能启动（版本 $($h.version)）"
+
+          # 收尾：优雅退出，别强杀（强杀会让文件句柄多挂十几秒）
+          # 便携模式下 token 文件在 exe 旁边，不在 %APPDATA% —— 读错了就拿不到
+          # token，app.quit 打不出去，只能走 Kill，然后文件句柄挂十几秒，
+          # 后面查目录可能读到半截状态。这是绿色版这条链路上最容易踩的一处。
+          try {
+            $token = (Get-Content "$dir\日签数据\debug-api.json" -Raw -Encoding UTF8 |
+              ConvertFrom-Json).token
+            Invoke-RestMethod -Uri "http://127.0.0.1:58950/rpc" -Method Post -Body '{"m":"app.quit","a":{}}' `
+              -ContentType 'application/json' -Headers @{ 'X-Token' = $token } -TimeoutSec 8 | Out-Null
+          } catch { }
+          $proc.WaitForExit(15000) | Out-Null
+          if (-not $proc.HasExited) { $proc.Kill($true) }
+
+          # 关键断言：数据必须落在 exe 旁边的「日签数据」里
+          if (Test-Path "$dir\日签数据\riqian.db") {
+            Write-Host "OK 数据落在便携目录：$dir\日签数据"
+          } else {
+            Write-Error "绿色版的数据没落在 exe 旁边，便携模式失效了"
+            Get-ChildItem $dir -Recurse -Depth 2 | Select-Object FullName | Write-Host
+            exit 1
+          }
+
+          # 反向断言：便携模式下配置和配置里的数据目录都该落在 exe 旁边。
+          # 这一条比上面那条更容易被破坏 —— 数据目录走 ResolveRoot，
+          # 配置目录走 ConfigDir，是两段独立代码，改一处不会牵连另一处。
+          # 只要 ConfigDir 忘了判便携，%APPDATA% 就会被悄悄写一份，
+          # 用户拷走文件夹就丢设置（数据还在，但他会以为全丢了）。
+          $cfgDir = "$dir\日签数据"
+          if (Test-Path (Join-Path $cfgDir 'config.json')) {
+            Write-Host "OK 配置也落在便携目录"
+          } else {
+            Write-Error "便携模式的配置没落在 exe 旁边（ConfigDir 没判 IsPortable？）"
+            Get-ChildItem $cfgDir -Recurse -Depth 1 -ErrorAction SilentlyContinue |
+              Select-Object FullName | Write-Host
+            exit 1
+          }
+          if (Test-Path "$env:APPDATA\Riqian") {
+            $appDataAfter = Get-AppDataSnapshot
+            if ($appDataAfter -ne $appDataBefore) {
+              Write-Error "便携模式动了 %APPDATA%\Riqian（ConfigDir/DebugApi 漏判 IsPortable？）"
+              Write-Host "--- 之前 ---"; Write-Host $appDataBefore
+              Write-Host "--- 之后 ---"; Write-Host $appDataAfter
+              exit 1
+            }
+          }
+          Write-Host "OK 便携模式完全隔离，没碰 %APPDATA%\Riqian"
+
+      - name: 读取版本号
+        id: ver
+        shell: pwsh
+        run: |
+          $input_ver = '${{ github.event.inputs.version }}'
+          if ($input_ver) {
+            $v = $input_ver.TrimStart('v')
+          } elseif ('${{ github.ref_type }}' -eq 'tag') {
+            $v = '${{ github.ref_name }}'.TrimStart('v')
+          } else {
+            $v = (Select-Xml -Path Riqian.csproj -XPath '//Version').Node.InnerText.Trim()
+          }
+          Write-Output "version=$v"
+          Write-Output "tag=v$v"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$v"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=v$v"
+
+      - name: 生成 Release 说明
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          # 从 changelog.ts 里把这一版的条目抠出来，当 Release 正文。
+          # 不手写第二份 —— 手写的那份一定会和界面上显示的版本历史对不上。
+          $src = Get-Content 'web\src\lib\changelog.ts' -Raw -Encoding UTF8
+          $pattern = "(?s)v:\s*'$([regex]::Escape($ver))'.*?items:\s*\[(.*?)\]"
+          $m = [regex]::Match($src, $pattern)
+          if ($m.Success) {
+            $items = [regex]::Matches($m.Groups[1].Value, "'((?:[^'\\]|\\.)*)'") |
+              ForEach-Object { "- " + ($_.Groups[1].Value -replace "\\'", "'") }
+            $body = "## 更新内容`n`n" + ($items -join "`n")
+          } else {
+            $body = "版本 $ver"
+          }
+          # ⚠️ 这里**不能**用 here-string（@" ... "@）。
+          # PowerShell 要求结束符 "@ 顶格在第 0 列，而 YAML 的 `run: |`
+          # 要求所有行缩进深于父键 —— 两个要求打架，顶格那行会提前终止
+          # 块标量，YAML 就去把 markdown 当 YAML 解析，报
+          # `expected a comment or a line break, but found '文'`。
+          # 所以用逐行拼接，每行都老老实实缩进。
+          $body += "`n`n## 下载哪个`n`n"
+          $body += "| 文件 | 适合谁 |`n"
+          $body += "|---|---|`n"
+          $body += "| ``Riqian-Setup-$ver.exe`` | 想装到开始菜单、能像普通软件那样卸载 |`n"
+          $body += "| ``Riqian-Portable-$ver.zip`` | 不想装，解压即用；数据跟文件夹走，放 U 盘也行 |`n"
+          $body += "| ``Riqian-Source-$ver.zip`` | 想看源码、自己改自己编译 |`n`n"
+          $body += "安装版和绿色版是**同一个 exe**，差别只在有没有 ``portable.txt``：" + "`n"
+          $body += "有 → 数据放 exe 同级的「日签数据」；没有 → 数据放 ``%APPDATA%`` 里配的目录。`n`n"
+          $body += "三个包都需要 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)（Win11 自带）。`n`n"
+          $body += "## 校验`n`n"
+          $body += "``SHA256SUMS.txt`` 里是这个版本所有文件的哈希，下载后可自行核对。`n"
+          $body | Out-File -FilePath release-notes.md -Encoding utf8
+
+      - name: 生成 SHA256
+        shell: pwsh
+        run: |
+          cd releases
+          Get-ChildItem -Filter "Riqian-*" | ForEach-Object {
+            $h = (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Out-File -FilePath SHA256SUMS.txt -Encoding utf8
+          Get-Content SHA256SUMS.txt | Write-Host
+
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: 日签 ${{ steps.ver.outputs.version }}
+          body_path: release-notes.md
+          draft: true
+          # 先存成 draft，自己去 Releases 页面看一眼再点发布。
+          # 直接 published 的话，CI 一红就是用户 download 到一个坏包。
+          files: |
+            releases/Riqian-Setup-*.exe
+            releases/Riqian-Portable-*.zip
+            releases/Riqian-Source-*.zip
+            releases/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI 日志里留一份产物，Release 挂错的时候还能从 artifact 捞回来
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: releases/Riqian-*
+          retention-days: 30
