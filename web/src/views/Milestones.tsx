@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Topbar, Dialog } from '../components/ui';
+import { Topbar, Dialog, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { parseKey, todayKey } from '../lib/date';
@@ -227,9 +227,9 @@ export function MilestonesView() {
                                 <button
                                   className="msdel"
                                   title="删掉这条"
-                                  onClick={(e) => {
+                                  onClick={async (e) => {
                                     e.stopPropagation();
-                                    if (!confirm(`删掉「${m.title}」？`)) return;
+                                    if (!(await askConfirm(`删掉「${m.title}」？`, { ok: '删掉' }))) return;
                                     void (async () => {
                                       await api.milestone.delete(m.id);
                                       await load();

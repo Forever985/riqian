@@ -6,7 +6,7 @@ import type {
   Bootstrap, CalendarDay, CalendarMonth, CacheStats, Countdown, CountdownTrash, DateKey, Diagnostics, Entry, EntryListItem,
   FestivalItem, Habit, HabitHistory, HabitValue, JournalModule, MediaItem, ModuleValue, MusicItem,
   NoteDetail, NoteRow, Notebook, OnThisDay, Overview, PomodoroStats, RevisionDetail, RevisionRow,
-  AccountItem, AlarmItem, AppFacts, DraftItem, EncourageItem, HabitStatData, LedgerData, LedgerInsight, LedgerItem,
+  AccountItem, AlarmItem, AppFacts, DraftItem, EncourageItem, HabitStatData, LedgerData, LedgerInsight,
   PomoInsight, PomoDay, PomoMonth, RankData, RankExtraData, RecurItem, ReviewDay, ReviewRange, Settings, SummaryRow, TagCount,
   Template, Todo, TodoList, TodoSortMode, UserProfile, VaultQa, VaultStatus, DiagStats,
   DrawingMeta, DrawingFull, Jar, JarDetail, JarPreset,

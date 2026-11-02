@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Topbar } from '../components/ui';
+import { Topbar, askConfirm } from '../components/ui';
 import { ModuleList } from '../modules/ModuleList';
 import { BgPicker, HistoryDialog, PickDatesDialog, QuotePickerDialog, TemplatesDialog } from '../features/dialogs';
 import { ShareDialog, type ShareData } from '../features/share';
@@ -147,7 +147,7 @@ export function TodayView() {
                   title={published ? '改回草稿，继续修改' : '定稿：写完收工，之后默认只读'}
                   onClick={async () => {
                     const on = !published;
-                    if (!on && !confirm('改回草稿？改完可以再定稿。')) return;
+                    if (!on && !(await askConfirm('改回草稿？', { body: '改完可以再定稿。', ok: '改回草稿' }))) return;
                     const r = await publish(on);
                     toast(r.status === 'published' ? '已定稿，这一天收工了' : '已改回草稿');
                   }}
@@ -217,7 +217,7 @@ export function TodayView() {
                   <button
                     className="btn sm"
                     onClick={async () => {
-                      if (!confirm('改回草稿？改完可以再定稿。')) return;
+                      if (!(await askConfirm('改回草稿？', { body: '改完可以再定稿。', ok: '改回草稿' }))) return;
                       await publish(false);
                       toast('已改回草稿');
                     }}

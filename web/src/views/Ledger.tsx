@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Dialog, Topbar } from '../components/ui';
+import { Dialog, Topbar, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { pad, shiftMonth, todayKey } from '../lib/date';
 import { useDragSort } from '../components/DragSort';
@@ -389,7 +389,7 @@ export function LedgerView() {
   };
 
   const remove = async (it: LedgerItem) => {
-    if (!window.confirm(`删除这笔「${it.cat || '未分类'} ${amt(Number(it.amount) || 0)}」？删掉就找不回来了。`)) return;
+    if (!(await askConfirm(`删除这笔「${it.cat || '未分类'} ${amt(Number(it.amount) || 0)}」？`, { body: '删掉就找不回来了。', ok: '删除' }))) return;
     try {
       await api.ledgerDelete(it.id);
       await load(ym);
@@ -477,7 +477,7 @@ export function LedgerView() {
   const delAccRow = async (i: number) => {
     const row = accDraft[i];
     if (!row.id) { setAccDraft((prev) => prev.filter((_, k) => k !== i)); return; }
-    if (!window.confirm(`删除账户「${row.name || '未命名'}」？已经记下的流水会保留，只是不再归属这个账户。`)) return;
+    if (!(await askConfirm(`删除账户「${row.name || '未命名'}」？`, { body: '已经记下的流水会保留，只是不再归属这个账户。', ok: '删除' }))) return;
     try {
       await api.accountDelete(row.id);
       setAccDraft((prev) => prev.filter((_, k) => k !== i));
@@ -623,7 +623,7 @@ export function LedgerView() {
   };
 
   const removeRecur = async (r: RecurItem) => {
-    if (!window.confirm(`删除「${r.cat || '未分类'} ${amt(Number(r.amount) || 0)}」这条固定支出规则？已经记下的流水不会删。`)) return;
+    if (!(await askConfirm(`删除「${r.cat || '未分类'} ${amt(Number(r.amount) || 0)}」这条固定支出规则？`, { body: '已经记下的流水不会删。', ok: '删除' }))) return;
     try {
       await api.ledgerRecurDelete(r.id);
       await loadRecur();
@@ -1715,7 +1715,7 @@ function CatRow({ name, onRename, onDrop, drag }: {
             className="btn sm danger"
             type="button"
             onClick={async () => {
-              if (!window.confirm(`把「${name}」并进「其他」？账不会丢，只是换个分类。`)) return;
+              if (!(await askConfirm(`把「${name}」并进「其他」？`, { body: '账不会丢，只是换个分类。', ok: '并进去' }))) return;
               await onDrop();
             }}
           >删掉</button>

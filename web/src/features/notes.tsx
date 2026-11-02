@@ -5,9 +5,10 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { askText, Dialog } from '../components/ui';
+import { askText, Dialog, askConfirm } from '../components/ui';
 import { askProtect } from '../components/Lock';
 import { Icon } from '../components/Icons';
+import { ColorDots } from '../components/ColorDots';
 import type { NoteRow, Notebook } from '../types';
 
 export const NOTE_COLORS = ['#b8623a', '#4a7396', '#5f8256', '#8e6a9e', '#b8863a', '#4f8a86', '#a55a72', '#7a7469'];
@@ -232,19 +233,7 @@ export function NewNoteDialog({
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label>笔记本颜色<span className="small muted" style={{ marginLeft: 6 }}>（记在笔记本上，左栏的圆点）</span></label>
-        <div className="row" style={{ gap: 7 }}>
-          {NOTE_COLORS.map((c) => (
-            <span
-              key={c}
-              onClick={() => setColor(c)}
-              title={c}
-              style={{
-                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
-              }}
-            />
-          ))}
-        </div>
+        <ColorDots colors={NOTE_COLORS} value={color} onPick={setColor} title />
       </div>
 
       {/* 第 128 条：这一篇自己的颜色 / 图标 —— 用户原来抱怨的就是缺这个 */}
@@ -263,18 +252,7 @@ export function NewNoteDialog({
               border: `2px dashed ${!markColor ? 'var(--ink)' : 'var(--line)'}`,
             }}
           />
-          {NOTE_COLORS.map((c) => (
-            <span
-              key={c}
-              onClick={() => setMarkColor(c)}
-              title={c}
-              style={{
-                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                boxSizing: 'border-box',
-                border: `2px solid ${markColor === c ? 'var(--ink)' : 'transparent'}`,
-              }}
-            />
-          ))}
+          <ColorDots colors={NOTE_COLORS} value={markColor} onPick={setMarkColor} title boxSizing />
         </div>
         <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
           {NOTE_ICONS.map((it) => (
@@ -399,18 +377,14 @@ export function NoteMarkPicker({
             boxSizing: 'border-box',
           }}
         />
-        {NOTE_COLORS.map((c) => (
-          <span
-            key={c}
-            onClick={() => { onPick({ color: c }); onClose(); }}
-            title={c}
-            style={{
-              width: 20, height: 20, borderRadius: '50%', background: c, cursor: 'pointer',
-              border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
-              boxSizing: 'border-box',
-            }}
-          />
-        ))}
+        <ColorDots
+          colors={NOTE_COLORS}
+          value={color}
+          size={20}
+          boxSizing
+          title
+          onPick={(c) => { onPick({ color: c }); onClose(); }}
+        />
       </div>
 
       <div className="small muted" style={{ margin: '9px 0 5px' }}>图标</div>
@@ -599,7 +573,7 @@ export function NotebookDialog({
     const msg = hasKids
       ? `删除分组「${book.name}」？先把下面的子笔记本和笔记整理好，删除后无法撤销。`
       : `删除笔记本「${book.name}」？里面的笔记会一并处理，删除后无法撤销。`;
-    if (!window.confirm(msg)) return;
+    if (!(await askConfirm(msg, { ok: '删除' }))) return;
     await api.notebooks.remove(book.id);
     onChanged();
     toast('已删除');
@@ -627,18 +601,7 @@ export function NotebookDialog({
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label>颜色</label>
-        <div className="row" style={{ gap: 7 }}>
-          {NOTE_COLORS.map((c) => (
-            <span
-              key={c}
-              onClick={() => setColor(c)}
-              style={{
-                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
-              }}
-            />
-          ))}
-        </div>
+        <ColorDots colors={NOTE_COLORS} value={color} onPick={setColor} />
       </div>
 
       <div className="field" style={{ marginBottom: 12 }}>
@@ -673,7 +636,7 @@ export function NotebookDialog({
               <button
                 className="btn sm ghost" disabled={busy}
                 onClick={async () => {
-                  if (!window.confirm(`取消「${book.name}」的密码保护？之后打开这个笔记本不再要密码。`)) return;
+                  if (!(await askConfirm(`取消「${book.name}」的密码保护？`, { body: '之后打开这个笔记本不再要密码。', ok: '取消保护' }))) return;
                   setBusy(true);
                   try {
                     await api.vault.remove(lockRule.id);

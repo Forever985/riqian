@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Topbar, Dialog, askText } from '../components/ui';
+import { Topbar, Dialog } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { PasswordField } from '../components/Lock';
 import { MediaPicker } from '../features/media';
@@ -11,7 +11,7 @@ import { normalize } from '../components/OrderEditor';
 import { PROFILE_SECTIONS } from '../lib/const';
 import { imgUrl } from '../lib/media';
 import { playChime } from '../store';
-import type { CacheStats, MusicItem, UserProfile, VaultStatus } from '../types';
+import type { CacheStats, UserProfile } from '../types';
 
 function mb(n: number) {
   if (!n) return '0 MB';
@@ -29,7 +29,6 @@ const SCOPE_NAME: Record<string, string> = {
 export function ProfileView() {
   const toast = useStore((s) => s.toast);
   const settings = useStore((s) => s.settings);
-  const setSetting = useStore((s) => s.setSetting);
   const reloadMedia = useStore((s) => s.reloadMedia);
   const reloadVault = useStore((s) => s.reloadVault);
   const vault = useStore((s) => s.vault);
@@ -47,10 +46,6 @@ export function ProfileView() {
   const [pwOpen, setPwOpen] = useState(false);
   const [pwMain, setPwMain] = useState('');
   const [pwAgain, setPwAgain] = useState('');
-  const [urlOpen, setUrlOpen] = useState(false);
-  const [url, setUrl] = useState('');
-  const [urlName, setUrlName] = useState('');
-
 
   const loadUser = async () => {
     const u = await api.user.get();

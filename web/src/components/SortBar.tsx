@@ -12,7 +12,6 @@
  *   - 选择记进 settings，下次进来还是上次那样
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Icon } from './Icons';
 import { useStore } from '../store';
 
 export type SortDir = 'asc' | 'desc';

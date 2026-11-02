@@ -19,7 +19,6 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { LedgerInsight } from '../types';
 
 const money = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -531,7 +530,7 @@ export function BalanceSplit({
         )) : <i style={{ width: '100%', background: 'var(--line2)' }} />}
       </div>
       <div className="lgc-split-legend">
-        {accounts.map((a, i) => (
+        {accounts.map((a) => (
           <div key={a.id} className={`lgc-leg ${a.balance <= 0 ? 'neg' : ''}`}>
             <i style={{ background: a.balance > 0 ? PALETTE[positive.findIndex((p) => p.id === a.id) % PALETTE.length] : 'var(--ink3)' }} />
             <span className="n">{a.name}</span>

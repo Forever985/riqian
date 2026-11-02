@@ -13,11 +13,12 @@ import { useStore } from '../store';
 import { useMarquee } from '../components/Marquee';
 import { SearchBox } from '../components/SearchBox';
 import { imgUrl, mediaAll, rawUrl, resolveRef, setMediaIndex } from '../lib/media';
-import { Dialog, askText } from '../components/ui';
+import { Dialog, askText, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { MediaToneDialog, toneFilter } from './mediaTone';
 import type { MediaItem } from '../types';
+import { EmptyState } from '../components/EmptyState';
 
 export { toneFilter, parseTone, toneIsFlat } from './mediaTone';
 export type { Tone } from './mediaTone';
@@ -577,7 +578,7 @@ export function MediaPicker({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(104px,1fr))', gap: 10, maxHeight: '56vh', overflow: 'auto' }}>
         {list.length ? list.map((m) => (
           <MediaGridCell key={m.id} m={m} picked={picked.includes(m.id)} onClick={() => pick(m)} />
-        )) : <div className="empty" style={{ gridColumn: '1/-1' }}>{q ? '没有匹配的结果。' : emptyText}</div>}
+        )) : <EmptyState grid>{q ? '没有匹配的结果。' : emptyText}</EmptyState>}
       </div>
     </Dialog>
   );
@@ -1109,16 +1110,12 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
   ];
 
   const remove = async (m: MediaItem) => {
-    if (!confirm(`从媒体库里删掉这个${kindName(kindOf(m))}？\n（只删库记录和文件，已引用它的日记会显示缺图）`)) return;
+    if (!(await askConfirm(`从媒体库里删掉这个${kindName(kindOf(m))}？`, {
+      body: '只删库记录和文件，已引用它的日记会显示缺图。',
+      ok: '删除',
+    }))) return;
     await api.media.remove(m.id, 1);
     toast('已删除');
-    setDetail(null);
-    await afterChange();
-  };
-
-  const saveName = async (m: MediaItem, name: string) => {
-    await api.media.rename(m.id, name.trim());
-    toast('已改名');
     setDetail(null);
     await afterChange();
   };
@@ -1509,7 +1506,10 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
             className="btn sm danger"
             disabled={!sel.length}
             onClick={async () => {
-              if (!confirm(`删除选中的 ${sel.length} 项？\n（只删库记录和文件，已引用它们的日记会显示缺图）`)) return;
+              if (!(await askConfirm(`删除选中的 ${sel.length} 项？`, {
+                body: '只删库记录和文件，已引用它们的日记会显示缺图。',
+                ok: '删除',
+              }))) return;
               await api.mediaBulk(sel, 'delete');
               toast(`已删除 ${sel.length} 项`);
               await afterChange();
@@ -1633,13 +1633,13 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
           </div>
         )
       ) : (
-        <div className="empty" style={{ lineHeight: 1.9 }}>
+        <EmptyState style={{ lineHeight: 1.9 }}>
           {q.trim()
             ? '没有匹配的媒体。换个关键词，或者把搜索框清空。'
             : kind !== 'all'
               ? `库里还没有${kindName(kind)}。切到「全部」看看，或者从电脑导入。`
               : '多媒体库还是空的。点「从电脑导入」挑图片 / 音频 / 视频；也可以把文件拖进「多媒体库_导入」文件夹，再点「扫描投递区」。'}
-        </div>
+        </EmptyState>
       )}
       </div>
     </>

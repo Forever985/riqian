@@ -318,6 +318,13 @@ h1,h2,h3,h4{margin:0;font-weight:600}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:var(--accent2);border-color:var(--accent2);color:#fff}
+/* 危险操作的主按钮（确认框里的「删除」「清空」）。
+   必须写在 .primary 之后并提高选择器权重，否则会被上面那条蓝色主按钮盖掉 —— 
+   危险的按钮长成普通按钮的样子，才是真危险。 */
+.btn.primary.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn.primary.danger:hover{background:color-mix(in srgb,var(--bad) 82%,#000);border-color:color-mix(in srgb,var(--bad) 82%,#000);color:#fff}
+/* 确认框正文：允许换行（后果说明常常是两句话），且不要继承标题的字重 */
+.cfm-body{font-size:13.5px;line-height:1.85;color:var(--ink2);white-space:pre-line}
 /* 第 87 条 —— 用户点名的那一个：
    「在"联系我们"中，"用模板"这个按钮没有体现出是个按钮。」
    根因就是这一行的 border-color:transparent：ghost 本意是"次要操作"，
@@ -881,7 +888,9 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 }
 .toast .tx-x:hover{opacity:1;background:color-mix(in srgb,var(--bg) 18%,transparent)}
 .booting{display:flex;align-items:center;justify-content:center;height:100vh;color:var(--ink3);letter-spacing:.1em}
-.empty{color:var(--ink3);font-size:13.5px;padding:10px 2px}
+/* .empty 的完整定义在文件末尾（「空态」那一节）。
+   这里原本还有一条同名的 .empty{color;font-size;padding}，跟末尾那条叠在一起生效 ——
+   两处定义分散在 3000 行里，改一处忘一处。现在合并到末尾唯一一处，见 EmptyState.tsx。 */
 .quote-pick{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13.5px;
   color:var(--ink2);cursor:pointer;margin-bottom:7px;line-height:1.6}
 .quote-pick:hover{border-color:var(--accent);background:var(--panel2)}
@@ -1288,7 +1297,48 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 .wmem-t{font-size:13px;color:var(--ink2);margin-top:3px;line-height:1.7}
 
 /* ---------- 笔记 ---------- */
-.notes{display:grid;grid-template-columns:186px 292px minmax(0,1fr);gap:14px;align-items:start;height:calc(100vh - 150px)}
+/*
+ * 三栏：笔记本 / 列表 / 正文。
+ *
+ * 原来写死 `186px 292px minmax(0,1fr)`，问题在左两栏是**固定像素**：
+ * 窗口 1104px 时（默认打开的大小），186 + 292 + 两个 14px 间距 + 编辑区左右各 18px 内边距，
+ * 正文实际只剩 253px —— 一篇分节带编号的复盘，每行只放得下 15 个汉字，读起来像挤在收据上。
+ *
+ * 现在左两栏可伸缩但**保底**：笔记本栏 130–186，列表栏 250–292。
+ *
+ * 列表栏的 250 是实测出来的硬底线。一行 203px 宽时：内边距 20、色点 9、日期 27、⋯ 24，
+ * 再加上三处间距，留给标题只有 107px —— 「第三季度工作复盘（草稿）」13 个字只显示 7 个，
+ * 被截成「第三季度工作复…」。250 能让标题拿到约 150px（10 个字），才算能用。
+ *
+ * 正文给 380px 下限。三者加起来（130+250+380+28）是 788，刚好卡在默认窗口
+ * 1104px 时 `.notes` 容器的 796px 里，不出现横向滚动条；再窄就走
+ * `max-width:1100px` 那个断点，正文自己独占一行。
+ */
+.notes{
+  display:grid;
+  grid-template-columns:
+    clamp(130px, 15%, 186px)
+    clamp(250px, 27%, 292px)
+    minmax(380px, 1fr);
+  gap:14px;align-items:start;height:calc(100vh - 150px);
+  /* 窗口窄于三栏之和时允许横向滚动，不硬压 */
+  overflow-x:auto;
+}
+.notes > *{min-width:0}
+
+/*
+ * 专注写：左两栏收起，正文占满整宽。
+ *
+ * 用 display:none 而不是 width:0 —— 收起来的栏还留着 DOM 的话，
+ * 里面的 overflow 容器和拖动排序的 ref 量出来的位置全是 0，
+ * 退出专注后 FLIP 动画会跳一下。直接不渲染更干净。
+ *
+ * 正文有了整宽之后不该无限拉长：中文单行超过 40 字左右，眼睛回行容易错行。
+ * 所以给它一个 46em 的上限并居中 —— 窗口再大也只是两边留白，不把一行拉成一整条。
+ */
+.notes.zen{grid-template-columns:minmax(0,1fr)}
+.notes.zen .nbooks,.notes.zen .nlist{display:none}
+.notes.zen .nedit{max-width:46em;width:100%;justify-self:center}
 .nbooks,.nlist{
   display:flex;flex-direction:column;gap:2px;overflow-y:auto;max-height:100%;
   padding-right:3px;
@@ -1388,25 +1438,87 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 @media (max-width:720px){
   .mf-right{margin-left:0}
 }
-.nedit{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;min-height:300px;max-height:100%;display:flex;flex-direction:column}
-.nedit-h{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+/*
+ * 编辑区必须自己撑满整列高度。
+ *
+ * 原来写的是 `max-height:100%` —— 那是「上限」，不是「撑开」。
+ * 结果编辑区只按内容高度长：一篇短笔记只有 410px 高，
+ * 下面空着 176px 不落笔的灰色地带，看起来像页面没渲染完。
+ * 改成 height:100%，再把正文区 flex:1 撑开，短笔记也占满整列；
+ * .nbody 自己有 overflow-y:auto，长文照样在框内滚动，不会把页面顶出去。
+ */
+.nedit{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 18px;display:flex;flex-direction:column;
+  height:100%;min-height:300px;
+}
+.nedit-h{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:nowrap}
+/*
+ * min-width:0 是这里的关键，不是可选的修饰。
+ *
+ * `input` 自带 `size` 属性算出来的固有宽度（约 170px），而 flex 项的
+ * `min-width` 默认是 `auto` —— 意思是「按内容固有宽度算，不许比我小」。
+ * 于是 `flex:1` 只能让它**变宽**，不能让它**收窄**。
+ *
+ * 结果：标题栏总宽超出编辑区右边界 41px，把整个 `.notes` 撑出横向滚动条
+ * （而且因为它 overflow-x:auto，用户会看到一条没必要的滑块）。
+ * 加 min-width:0 之后 input 才真正可压缩，标题过长走自身的横向滚动。
+ */
 .ntitle{
-  flex:1;border:0;background:transparent;font-size:19px;font-weight:600;color:var(--ink);
+  flex:1;min-width:0;border:0;background:transparent;font-size:19px;font-weight:600;color:var(--ink);
   outline:0;padding:2px 0;
 }
+.nedit-h > .btn{flex:0 0 auto}
 .ntools{
-  display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--line2);
+  display:flex;align-items:center;gap:1px;flex-wrap:wrap;padding:4px 0;border-bottom:1px solid var(--line2);
   margin-bottom:10px;
 }
+/*
+ * 一排放下 10 个按钮。
+ *
+ * 原来 padding 是 3px 7px、gap 2px，10 个按钮实测 331px，
+ * 加上 9 个间距 18px、两个分隔符 18px、以及右侧那个弹性占位的 `saved` 文字，
+ * 在 362px 的正文栏里放不下 —— 折成两行，工具栏凭空高出来 29px。
+ *
+ * 现在按钮左右收到 5px、字号 12px，窄的那个（B/I/U/S）再单独收一次。
+ * 省下来的宽度全部给分隔符和 `saved`，一行放得下，且不需要靠 nowrap 硬撑
+ * （窗口真窄到极限时还是允许折行，总比溢出被裁掉强）。
+ */
 .ntools button{
-  border:0;background:transparent;color:var(--ink2);font-size:12.5px;padding:3px 7px;
-  border-radius:5px;cursor:pointer;
+  border:0;background:transparent;color:var(--ink2);font-size:12px;padding:3px 5px;
+  border-radius:5px;cursor:pointer;white-space:nowrap;line-height:1.5;
 }
 .ntools button:hover{background:var(--panel2);color:var(--ink)}
-.ntools .sep{width:1px;height:14px;background:var(--line);margin:0 4px}
-.ntools .sp{flex:1}
+.ntools .sep{width:1px;height:14px;background:var(--line);margin:0 3px;flex:0 0 auto}
+.ntools .sp{flex:1 1 0;min-width:0}
+.ntools .saved{flex:0 0 auto;font-size:11px;color:var(--ink3);white-space:nowrap}
 .nbody{flex:1;overflow-y:auto;min-height:220px;outline:0;font-size:var(--fs);line-height:var(--lh)}
 .nempty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--ink3);font-size:13px}
+
+/*
+ * 正文排版：这是「写完一整篇长文」时才暴露的问题，短笔记看不出来。
+ *
+ * 一篇分三节带编号的复盘贴进原来的编辑区，会变成一整片紧挨着的字：
+ *  - 段落之间没有间距，回车打出来的空行被 line-height 吃掉了一半，读起来分不出层次
+ *  - 编号列表没有缩进，1. 2. 3. 跟正文左边缘对齐，看起来像普通句子
+ *  - 行高对 16px 的中文偏紧，长段落眼睛容易串行
+ *
+ * 这里只调「读」的那一面：不改字号（用户可以在设置里调）、不动颜色。
+ */
+.nbody p{margin:0 0 .72em}
+.nbody p:last-child{margin-bottom:0}
+/* 空段落（用户连按两次回车想留白）要真的留出白来，否则等于白按 */
+.nbody p:empty::after{content:'';display:inline-block;height:1em}
+.nbody ul,.nbody ol{margin:.2em 0 .72em;padding-left:1.7em}
+.nbody li{margin:.18em 0}
+/* 章节标题（一、二、三 这类）：正文里用 h2/h3 时给点左右呼吸感 */
+.nbody h1,.nbody h2,.nbody h3{margin:1.1em 0 .5em;line-height:1.45}
+.nbody h1:first-child,.nbody h2:first-child,.nbody h3:first-child{margin-top:0}
+/*
+ * 注意：这里**不要**给 .nbody 写死 line-height。
+ * 行距由设置里的「疏密」决定（--lh，默认 1.85），用户自己调过的话必须尊重。
+ * 上面那些 margin 只管段落间距，跟行距是两件事。
+ */
 
 /* ---------- 密码 ---------- */
 .pwfield{
@@ -2815,13 +2927,20 @@ html[data-appbg] :is(.dnav, .nbook, .nrow, .rail-item, .snav, .mod-tools button,
 }
 .entrytitle::placeholder{ color: var(--ink3); }
 
-/* 2) 空态：以前只有一行灰字，没有任何容器，一整块空白看起来像页面崩了 */
+/* 2) 空态：以前只有一行灰字，没有任何容器，一整块空白看起来像页面崩了
+ *
+ * 这里现在也是 .empty 的**唯一**定义。原先文件开头还有一条同名的
+ * .empty{color;font-size;padding}，被这条覆盖掉一半 —— 两处分散在 3000 行里，
+ * 改一处忘一处，还容易被误读成"这里写了两遍"。把那条的颜色/字号并进来后删掉。
+ */
 .empty{
   background: color-mix(in srgb, var(--panel2) 70%, transparent);
   border: 1px dashed var(--line);
   border-radius: 10px;
   padding: 16px 14px;
   line-height: 1.8;
+  color: var(--ink3);
+  font-size: 13.5px;
 }
 .empty.small{ padding: 10px 12px; }
 /* 卡片内嵌空态时不要双重边框 */

@@ -8,6 +8,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Dialog } from '../components/ui';
 import { useStore } from '../store';
+import { EmptyState } from '../components/EmptyState';
 import {
   type AnyPack, parsePack, stringifyPack, packSummary,
   PACK_VERSION, type PackKind,
@@ -231,7 +232,7 @@ export function InstalledList({
   const list = reg.items.filter((x) => x.kind === kind);
 
   if (!list.length) {
-    return <div className="empty" style={{ padding: '28px 0', textAlign: 'center', opacity: 0.7 }}>{emptyText}</div>;
+    return <EmptyState center style={{ padding: '28px 0' }}>{emptyText}</EmptyState>;
   }
 
   const doExport = (rec: Installed) => {

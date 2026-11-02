@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import { SearchBox } from '../components/SearchBox';
-import { Topbar, Dialog, askText } from '../components/ui';
+import { Topbar, Dialog, askText, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { Guarded, askProtect } from '../components/Lock';
 import { RichText } from '../editors/RichText';
@@ -32,14 +32,6 @@ const NOTE_SORTS: SortOption<SortKey>[] = [
   { v: 'manual', n: '手动', tip: '自己拖出来的顺序', dir: false },
 ];
 
-const SORT_LABEL: Record<SortKey, string> = {
-  updated: '更新时间',
-  created: '创建时间',
-  name: '名称',
-  chars: '篇幅',
-  manual: '手动',
-};
-
 interface TextCache {
   plain: string;
   tags: string[];
@@ -68,6 +60,43 @@ export function NotesView() {
   const setSort = (v: SortKey) => { void setSetting('noteSort', v); };
   const setDir = (d: SortDir) => { void setSetting('noteSortDir', d); };
   const [folded, setFolded] = useState<string[]>([]);
+  /*
+   * 专注写：把左两栏（笔记本 / 列表）收起来，正文占满整宽。
+   *
+   * 为什么需要：一篇分三节带编号的季度复盘，正文净宽只有 386px（每行 24 个汉字），
+   * 而三栏里笔记本栏 + 列表栏吃掉了 344px。写短笔记无所谓，
+   * 写长文时那两栏一眼都不看，却一直在挤正文。
+   *
+   * 记进 localStorage 而不是 settings：这是一次性的阅读姿态，
+   * 换台机器不该带着走，也不值得为它加一个设置项。
+   */
+  const [zen, setZen] = useState(() => {
+    try { return localStorage.getItem('noteZen') === '1'; } catch { return false; }
+  });
+  const toggleZen = () => {
+    setZen((v) => {
+      try { localStorage.setItem('noteZen', v ? '0' : '1'); } catch { /* 隐私模式忽略 */ }
+      return !v;
+    });
+  };
+  /*
+   * 专注模式下按 Esc 退出。
+   *
+   * 注意别抢了别的 Esc：列表右键菜单、笔记本弹窗、确认框都可能正开着，
+   * 那时 Esc 该关它们而不是退出专注。所以只在「屏幕上没有遮罩层」时才响应。
+   * 判据用 .mask —— 项目里所有弹层都套了这一层。
+   */
+  useEffect(() => {
+    if (!zen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('.mask')) return;   // 有弹层开着，让弹层自己处理
+      setZen(false);
+      try { localStorage.setItem('noteZen', '0'); } catch { /* 忽略 */ }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zen]);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trash, setTrash] = useState<{ id: string; title: string; at: string }[]>([]);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -663,7 +692,7 @@ export function NotesView() {
         </>}
       />
       <div className="wrap">
-        <div className="notes">
+        <div className={`notes${zen ? ' zen' : ''}`}>
           {/* 左栏：分组 → 笔记本 */}
           <div className="nbooks">
             <button className={`nbook ${nb === '' ? 'on' : ''}`} onClick={() => setNb('')}>
@@ -892,6 +921,12 @@ export function NotesView() {
                   <button className="btn sm ghost" title="移到回收站" onClick={() => void remove(activeNoteId)}>
                     <Icon name="trash" size={13} />
                   </button>
+                  {/* 专注写：收起左两栏，正文占满。写长文时用 */}
+                  <button
+                    className={`btn sm ghost ${zen ? 'primary' : ''}`}
+                    title={zen ? '退出专注写（也可以按 Esc）' : '专注写：把左边两栏收起来，正文占满'}
+                    onClick={toggleZen}
+                  ><Icon name={zen ? 'shrink' : 'expand'} size={13} /></button>
                 </div>
 
                 <div className="row" style={{ gap: 6, marginBottom: 6 }}>
@@ -956,7 +991,8 @@ export function NotesView() {
                   <button data-tip="有序列表" onClick={() => exec('insertOrderedList')}>1. 列表</button>
                   <button data-tip="引用一段话" onClick={() => exec('formatBlock', 'blockquote')}>❝ 引用</button>
                   <span className="sp" />
-                  <span className="small muted">{saved}</span>
+                  {/* 窄栏里这行字也参与挤位，给它 flex:0 0 auto 别被压成一列字 */}
+                  <span className="small muted saved">{saved}</span>
                 </div>
                 {/*
                   第 167 条：笔记正文不再自己造一套 contenteditable + execCommand，
@@ -997,7 +1033,7 @@ export function NotesView() {
               disabled={!trash.length}
               onClick={async () => {
                 if (!trash.length) return;
-                if (!confirm(`清空回收站？${trash.length} 篇笔记会被彻底删除，无法恢复。`)) return;
+                if (!(await askConfirm('清空回收站？', { body: `${trash.length} 篇笔记会被彻底删除，无法恢复。`, ok: '清空' }))) return;
                 const r = await api.notePurgeAll();
                 await openTrash();
                 await loadRows();
@@ -1025,7 +1061,7 @@ export function NotesView() {
               <button
                 className="btn sm danger"
                 onClick={async () => {
-                  if (!confirm(`彻底删除「${t.title || '未命名'}」？删除后无法恢复。`)) return;
+                  if (!(await askConfirm(`彻底删除「${t.title || '未命名'}」？`, { body: '删除后无法恢复。', ok: '彻底删除' }))) return;
                   await api.notePurge(t.id);
                   await openTrash();
                   toast('已彻底删除');

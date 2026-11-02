@@ -519,7 +519,6 @@ export function SecuritySection() {
   const reloadVault = useStore((s) => s.reloadVault);
   const toast = useStore((s) => s.toast);
   const settings = useStore((s) => s.settings);
-  const setSetting = useStore((s) => s.setSetting);
 
   const [hint, setHint] = useState('');
   /* 第 31 / 32 条：日期段加锁、笔记本整本加锁 */

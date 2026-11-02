@@ -7,7 +7,7 @@ import { imgUrl } from './lib/media';
 import { Sidebar } from './components/Sidebar';
 import { Tabs } from './components/Tabs';
 import { AppLockScreen, Guarded } from './components/Lock';
-import { PromptHost, Toast } from './components/ui';
+import { ConfirmHost, PromptHost, Toast } from './components/ui';
 import { TooltipLayer } from './components/Tooltip';
 import { installContextMenuGuard } from './components/ContextMenu';
 import { TodayView } from './views/Today';
@@ -285,7 +285,6 @@ export default function App() {
   const pomoTick = useStore((s) => s.pomoTick);
   const appLocked = useStore((s) => s.appLocked);
   const date = useStore((s) => s.date);
-  const setDate = useStore((s) => s.setDate);
 
   useEffect(() => {
     installFlushHook();
@@ -426,6 +425,7 @@ export default function App() {
       <TooltipLayer />
       <Toast />
       <PromptHost />
+      <ConfirmHost />
       <QuickPanel />
       <CommandPalette />
       <ShortcutHelp />

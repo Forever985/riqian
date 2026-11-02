@@ -1,0 +1,604 @@
+[
+ {
+  "file": "web/src/views/Ledger.tsx",
+  "name": "LedgerView",
+  "line": 76,
+  "len": 1516,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Notes.tsx",
+  "name": "NotesView",
+  "line": 41,
+  "len": 1075,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Todos.tsx",
+  "name": "TodosView",
+  "line": 84,
+  "len": 764,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Alarms.tsx",
+  "name": "AlarmsView",
+  "line": 230,
+  "len": 568,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/CalendarView.tsx",
+  "name": "CalendarView",
+  "line": 82,
+  "len": 491,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Stats.tsx",
+  "name": "StatsView",
+  "line": 113,
+  "len": 428,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Countdown.tsx",
+  "name": "CountdownView",
+  "line": 24,
+  "len": 396,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Pomodoro.tsx",
+  "name": "PomodoroView",
+  "line": 36,
+  "len": 369,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Flow.tsx",
+  "name": "FlowView",
+  "line": 58,
+  "len": 359,
+  "kind": "ts"
+ },
+ {
+  "file": "RpcCatalog.cs",
+  "name": "M",
+  "line": 41,
+  "len": 352,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/Review.tsx",
+  "name": "ReviewView",
+  "line": 23,
+  "len": 334,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/lib/smartDate.ts",
+  "name": "parseSmartDate",
+  "line": 108,
+  "len": 319,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Today.tsx",
+  "name": "TodayView",
+  "line": 17,
+  "len": 316,
+  "kind": "ts"
+ },
+ {
+  "file": "DbV11.cs",
+  "name": "LedgerInsight",
+  "line": 496,
+  "len": 314,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/Drafts.tsx",
+  "name": "DraftsView",
+  "line": 39,
+  "len": 305,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Profile.tsx",
+  "name": "ProfileView",
+  "line": 29,
+  "len": 280,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "LayoutSection",
+  "line": 584,
+  "len": 278,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Habits.tsx",
+  "name": "HabitsView",
+  "line": 363,
+  "len": 264,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/components/Sidebar.tsx",
+  "name": "Sidebar",
+  "line": 87,
+  "len": 263,
+  "kind": "ts"
+ },
+ {
+  "file": "MainFormV10.cs",
+  "name": "V10Dispatch",
+  "line": 62,
+  "len": 255,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/features/EncourageEditor.tsx",
+  "name": "EncourageEditor",
+  "line": 36,
+  "len": 237,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/SettingsV8.tsx",
+  "name": "SecuritySection",
+  "line": 517,
+  "len": 235,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Records.tsx",
+  "name": "RecordsView",
+  "line": 25,
+  "len": 234,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/CacheCenter.tsx",
+  "name": "CacheCenterView",
+  "line": 24,
+  "len": 224,
+  "kind": "ts"
+ },
+ {
+  "file": "Db.cs",
+  "name": "Schema",
+  "line": 141,
+  "len": 212,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "HabitsSection",
+  "line": 1068,
+  "len": 209,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/features/quick.tsx",
+  "name": "QuickPanel",
+  "line": 24,
+  "len": 206,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Welcome.tsx",
+  "name": "WelcomeView",
+  "line": 39,
+  "len": 204,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "DiarySection",
+  "line": 865,
+  "len": 200,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/components/Tabs.tsx",
+  "name": "Tabs",
+  "line": 40,
+  "len": 199,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Milestones.tsx",
+  "name": "MilestonesView",
+  "line": 87,
+  "len": 195,
+  "kind": "ts"
+ },
+ {
+  "file": "MainForm.cs",
+  "name": "Dispatch",
+  "line": 456,
+  "len": 188,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/SettingsV8.tsx",
+  "name": "TraySection",
+  "line": 235,
+  "len": 183,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/editors/engine.ts",
+  "name": "createEngine",
+  "line": 458,
+  "len": 174,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/ThemeCenter.tsx",
+  "name": "ThemeCenterView",
+  "line": 24,
+  "len": 174,
+  "kind": "ts"
+ },
+ {
+  "file": "Db.cs",
+  "name": "Overview",
+  "line": 2381,
+  "len": 165,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/features/DiagPanel.tsx",
+  "name": "DiagPanel",
+  "line": 18,
+  "len": 164,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/PluginCenter.tsx",
+  "name": "PluginCenterView",
+  "line": 21,
+  "len": 156,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "SettingsView",
+  "line": 99,
+  "len": 150,
+  "kind": "ts"
+ },
+ {
+  "file": "DbSearch.cs",
+  "name": "SearchAll",
+  "line": 45,
+  "len": 139,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/features/quick.tsx",
+  "name": "CommandPalette",
+  "line": 255,
+  "len": 138,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Info.tsx",
+  "name": "ContactView",
+  "line": 446,
+  "len": 138,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Workshop.tsx",
+  "name": "WorkshopView",
+  "line": 47,
+  "len": 132,
+  "kind": "ts"
+ },
+ {
+  "file": "DbV7.cs",
+  "name": "EnsureV7",
+  "line": 27,
+  "len": 130,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/features/encourage.tsx",
+  "name": "EncourageQuote",
+  "line": 38,
+  "len": 119,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/lib/theme.ts",
+  "name": "applyAppearance",
+  "line": 120,
+  "len": 119,
+  "kind": "ts"
+ },
+ {
+  "file": "DbV11.cs",
+  "name": "EnsureV11",
+  "line": 21,
+  "len": 118,
+  "kind": "cs"
+ },
+ {
+  "file": "MainFormV7.cs",
+  "name": "V7Dispatch",
+  "line": 198,
+  "len": 117,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/components/Tooltip.tsx",
+  "name": "TooltipLayer",
+  "line": 19,
+  "len": 117,
+  "kind": "ts"
+ },
+ {
+  "file": "Db.cs",
+  "name": "PomodoroStats",
+  "line": 1744,
+  "len": 114,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV10.cs",
+  "name": "LedgerList",
+  "line": 785,
+  "len": 114,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV8.cs",
+  "name": "ReviewRange",
+  "line": 297,
+  "len": 109,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV9.cs",
+  "name": "PomoInsight",
+  "line": 124,
+  "len": 109,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV10.cs",
+  "name": "EnsureV10",
+  "line": 17,
+  "len": 105,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV7.cs",
+  "name": "SettingsImport",
+  "line": 638,
+  "len": 102,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/ProfileFields.tsx",
+  "name": "ProfileFields",
+  "line": 33,
+  "len": 100,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/components/ContextMenu.tsx",
+  "name": "useContextMenu",
+  "line": 45,
+  "len": 98,
+  "kind": "ts"
+ },
+ {
+  "file": "DbQuick.cs",
+  "name": "public",
+  "line": 17,
+  "len": 97,
+  "kind": "cs"
+ },
+ {
+  "file": "Db.cs",
+  "name": "Countdowns",
+  "line": 1347,
+  "len": 95,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/modules/HabitWidget.tsx",
+  "name": "body",
+  "line": 56,
+  "len": 95,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/SettingsV8.tsx",
+  "name": "HotkeySection",
+  "line": 119,
+  "len": 94,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "PomoSection",
+  "line": 1280,
+  "len": 93,
+  "kind": "ts"
+ },
+ {
+  "file": "MainForm.cs",
+  "name": "InitAsync",
+  "line": 44,
+  "len": 89,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/lib/markdown.ts",
+  "name": "mdToHtml",
+  "line": 7,
+  "len": 88,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Settings.tsx",
+  "name": "NotifySection",
+  "line": 1376,
+  "len": 88,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/Alarms.tsx",
+  "name": "nextFireText",
+  "line": 142,
+  "len": 85,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/views/SettingsV8.tsx",
+  "name": "ShareSection",
+  "line": 421,
+  "len": 84,
+  "kind": "ts"
+ },
+ {
+  "file": "Sticky.cs",
+  "name": "BuildUi",
+  "line": 188,
+  "len": 83,
+  "kind": "cs"
+ },
+ {
+  "file": "DebugApi.cs",
+  "name": "Handle",
+  "line": 167,
+  "len": 82,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV8.cs",
+  "name": "EnsureV8",
+  "line": 20,
+  "len": 81,
+  "kind": "cs"
+ },
+ {
+  "file": "Db.cs",
+  "name": "ChangeRoot",
+  "line": 2702,
+  "len": 80,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV11.cs",
+  "name": "MediaStorageStats",
+  "line": 905,
+  "len": 80,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/features/rankBoard.tsx",
+  "name": "RankBoard",
+  "line": 22,
+  "len": 78,
+  "kind": "ts"
+ },
+ {
+  "file": "DbV10.cs",
+  "name": "AlarmsDue",
+  "line": 610,
+  "len": 75,
+  "kind": "cs"
+ },
+ {
+  "file": "Db.cs",
+  "name": "Seed",
+  "line": 408,
+  "len": 73,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/views/Jars.tsx",
+  "name": "card",
+  "line": 312,
+  "len": 73,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/components/ui.tsx",
+  "name": "Toast",
+  "line": 341,
+  "len": 71,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/editors/engine.ts",
+  "name": "splitBlock",
+  "line": 318,
+  "len": 70,
+  "kind": "ts"
+ },
+ {
+  "file": "MainFormV8.cs",
+  "name": "V8Dispatch",
+  "line": 565,
+  "len": 69,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV10.cs",
+  "name": "AlarmSave",
+  "line": 504,
+  "len": 65,
+  "kind": "cs"
+ },
+ {
+  "file": "DbSearch.cs",
+  "name": "HabitRemindDue",
+  "line": 356,
+  "len": 64,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV8.cs",
+  "name": "ReviewDay",
+  "line": 222,
+  "len": 64,
+  "kind": "cs"
+ },
+ {
+  "file": "DbV10.cs",
+  "name": "MediaList2",
+  "line": 226,
+  "len": 62,
+  "kind": "cs"
+ },
+ {
+  "file": "MainForm.cs",
+  "name": "ResolveRoot",
+  "line": 136,
+  "len": 62,
+  "kind": "cs"
+ },
+ {
+  "file": "web/src/lib/iconPack.ts",
+  "name": "parseIconPack",
+  "line": 57,
+  "len": 61,
+  "kind": "ts"
+ },
+ {
+  "file": "web/src/App.tsx",
+  "name": "useGlobalImageIntake",
+  "line": 65,
+  "len": 60,
+  "kind": "ts"
+ }
+]

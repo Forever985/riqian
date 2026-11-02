@@ -12,7 +12,7 @@ type IconName =
   | 'user' | 'lock' | 'unlock' | 'music' | 'database' | 'bell' | 'palette'
   | 'shield' | 'book' | 'pin' | 'link' | 'volume' | 'mute' | 'external' | 'filter'
   | 'download' | 'share' | 'key' | 'monitor' | 'eye-off' | 'question' | 'grid'
-  | 'up' | 'down';
+  | 'up' | 'down' | 'expand' | 'shrink';
 
 export const ICON_PATHS: Record<IconName, ReactElement> = {
   pen: <><path d="M4 20h4L19 9l-4-4L4 16v4z" /><path d="M14 6l4 4" /></>,
@@ -40,6 +40,10 @@ export const ICON_PATHS: Record<IconName, ReactElement> = {
   left: <><path d="M14 6l-6 6 6 6" /></>,
   up: <><path d="M6 14l6-6 6 6" /></>,
   down: <><path d="M6 10l6 6 6-6" /></>,
+  /* 专注写：中间一条竖线，两侧箭头往外张 —— 把编辑区铺满的意思 */
+  expand: <><path d="M4 5v14" /><path d="M20 5v14" /><path d="M10 8l-3 4 3 4" /><path d="M14 8l3 4-3 4" /></>,
+  /* 退出专注：箭头朝内收拢 */
+  shrink: <><path d="M4 5v14" /><path d="M20 5v14" /><path d="M7 8l3 4-3 4" /><path d="M17 8l-3 4 3 4" /></>,
   right: <><path d="M10 6l6 6-6 6" /></>,
   note: <><path d="M5 4.5h11l3 3v12H5z" /><path d="M8.5 10h7M8.5 14h5" /></>,
   inbox: <><path d="M3.5 13.5h4l1.5 2.5h6l1.5-2.5h4" /><path d="M5.5 5h13l1 8.5v5a1.5 1.5 0 01-1.5 1.5h-12A1.5 1.5 0 014.5 18v-5z" /></>,

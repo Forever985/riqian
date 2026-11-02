@@ -127,6 +127,7 @@ namespace Riqian
 
             var failed = new List<object>();
             var registered = new List<string>();
+            var pairs = new List<string>();
             if (Get(s, "hotkeyEnable", "1") != "1") return new { ok = true, disabled = true, failed, registered };
 
             foreach (var (id, key, action, name) in HotkeyMap)
@@ -138,9 +139,22 @@ namespace Riqian
                     failed.Add(new { key, combo, name, reason = "格式无法识别" });
                     continue;
                 }
-                if (RegisterHotKey(Handle, id, mods, vk)) { _hotkeyOn.Add(id); registered.Add(key); }
+                if (RegisterHotKey(Handle, id, mods, vk))
+                {
+                    _hotkeyOn.Add(id);
+                    registered.Add(key);
+                    pairs.Add(key + "=" + combo);
+                }
                 else failed.Add(new { key, combo, name, reason = "被别的软件占用了" });
             }
+            /*
+             * 注册结果要落日志。之前不记，于是「老板键是不是真的挂上了、
+             * 挂的是哪个组合」这类基本事实都只能翻代码猜。
+             * 用户遇到「莫名其妙弹出记事本」时，这行就是第一手证据。
+             */
+            Diag.Info("hotkey", "注册完成 · 成功 " + registered.Count + "/" + HotkeyMap.Length
+                + " · " + string.Join(" ", pairs)
+                + (failed.Count > 0 ? " · 失败 " + failed.Count + " 个" : ""));
             return new { ok = true, failed, registered };
         }
 
@@ -167,7 +181,7 @@ namespace Riqian
             switch (action)
             {
                 case "toggle": ToggleMain(); break;
-                case "boss": ToggleBoss(); break;
+                case "boss": ToggleBoss("热键"); break;
                 /*
                  * 第 165 条：这三个走独立浮窗，不再把主窗口整个拽出来。
                  * 用户原话「快捷建立是能直接生成一个浮窗的」——
@@ -193,9 +207,9 @@ namespace Riqian
 
         /* ================= 老板键 ================= */
 
-        private void ToggleBoss()
+        private void ToggleBoss(string here = "unknown")
         {
-            if (_bossOn) { RestoreFromBoss(); return; }
+            if (_bossOn) { RestoreFromBoss(here + "(再按一次)"); return; }
             _bossOn = true;
             try
             {
@@ -203,18 +217,32 @@ namespace Riqian
                 if (_disguise == null || _disguise.IsDisposed)
                 {
                     var style = Get(Settings(), "disguiseStyle", "note");
-                    _disguise = new DisguiseForm(style, RestoreFromBoss);
+                    _disguise = new DisguiseForm(style, () => RestoreFromBoss("伪装窗内点击"));
                 }
                 _disguise.Show();
                 _disguise.Activate();
+                /*
+                 * 用户原话「又莫名其妙弹出来这个记事本了。你检查过问题吗？」
+                 *
+                 * 这一行日志是后补的，之前成功路径一个字都不记 —— 于是「它到底怎么冒出来的」
+                 * 完全无法复盘，只能靠猜。三个触发入口（热键 / 托盘 / 设置页按钮）
+                 * 现在都会经由 here 记下来源，下次再发生能直接定位。
+                 */
+                Diag.Info("boss", $"进入伪装 · 来源={here} · 样式={Get(Settings(), "disguiseStyle", "note")}");
             }
-            catch (Exception ex) { Diag.Error("boss", "老板键切换失败，已强制回到正常界面", ex); _bossOn = false; ShowMain(); }
+            catch (Exception ex)
+            {
+                Diag.Error("boss", "老板键切换失败，已强制回到正常界面", ex);
+                _bossOn = false;
+                ShowMain();
+            }
         }
 
-        private void RestoreFromBoss()
+        private void RestoreFromBoss(string here)
         {
             _bossOn = false;
             try { if (_disguise != null && !_disguise.IsDisposed) _disguise.Hide(); } catch { }
+            Diag.Info("boss", $"退出伪装 · 来源={here}");
             ShowMain();
         }
 
@@ -232,7 +260,7 @@ namespace Riqian
             ["todo"]  = ("快速加待办", f => f.QuickCapture("todo")),
             ["cd"]    = ("新建倒计时", f => f.HostCmd("quick:cd")),
             ["pomo"]  = ("开始番茄钟", f => f.StartPomoFromTray(f.TrayPomoMinutes())),
-            ["boss"]  = ("隐形模式", f => f.ToggleBoss()),
+            ["boss"]  = ("隐形模式", f => f.ToggleBoss("托盘菜单")),
             ["lock"]  = ("立即锁定", f => f.HostCmd("lock")),
             /* 第 75 条：用户说「小锁 icon 或者 Logo 什么的……托盘里面也要」。
                托盘本来就常驻，但界面锁了之后图标还是那个「签」，看不出状态。
@@ -574,7 +602,7 @@ namespace Riqian
                     orb = _orb != null && !_orb.IsDisposed && _orb.Visible,
                 };
             }
-            if (m == "boss.toggle") { ToggleBoss(); return new { ok = true, on = _bossOn }; }
+            if (m == "boss.toggle") { ToggleBoss("界面按钮"); return new { ok = true, on = _bossOn }; }
             if (m == "orb.toggle") { ApplyOrb(I(a, "on", 1) == 1); return new { ok = true }; }
 
             /* ---- 分享 ---- */

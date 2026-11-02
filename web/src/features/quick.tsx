@@ -25,7 +25,6 @@ export function QuickPanel() {
   const mode = useStore((s) => s.quick);
   const setQuick = useStore((s) => s.setQuick);
   const go = useStore((s) => s.go);
-  const setDate = useStore((s) => s.setDate);
   const toast = useStore((s) => s.toast);
   const pomo = useStore((s) => s.pomo);
 

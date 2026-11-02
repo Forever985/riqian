@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import type { EntryListItem, MediaItem, RevisionDetail, RevisionRow, Template } from '../types';
-import { Dialog, askText } from '../components/ui';
+import { Dialog, askText, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
+import { EmptyState } from '../components/EmptyState';
 import { importImageFiles, pickImageFiles } from '../lib/upload';
 import { imgUrl } from '../lib/media';
 import {
@@ -134,7 +135,7 @@ export function BgPicker({ onClose }: { onClose: () => void }) {
             </div>
             <div className="imgmeta">{m.name || m.id.slice(0, 8)}</div>
           </div>
-        )) : <div className="empty" style={{ gridColumn: '1/-1' }}>多媒体库里还没有图片，先去「多媒体库」导入。</div>}
+        )) : <EmptyState grid>多媒体库里还没有图片，先去「多媒体库」导入。</EmptyState>}
       </div>
 
       {isImg ? (
@@ -223,7 +224,7 @@ export function HistoryDialog({ onClose }: { onClose: () => void }) {
           <button
             className="btn primary"
             onClick={async () => {
-              if (!confirm('恢复会覆盖当前内容（当前内容也会存成一个新版本，可以再撤回）。')) return;
+              if (!(await askConfirm('恢复到这一版？', { body: '当前内容会被覆盖（不过也会存成一个新版本，可以再撤回）。', ok: '恢复' }))) return;
               await api.rev.restore(detail.id);
               await reloadEntry();
               toast('已恢复');
@@ -287,7 +288,7 @@ export function TemplatesDialog({ onClose }: { onClose: () => void }) {
   };
 
   const apply = async (t: Template) => {
-    if (!confirm(`套用「${t.name}」会覆盖当天的正文内容，继续？`)) return;
+    if (!(await askConfirm(`套用「${t.name}」？`, { body: '会覆盖当天的正文内容。', ok: '套用' }))) return;
     const r = await api.templates.apply(date, t.id);
     if (r.ok) {
       await reloadModules();

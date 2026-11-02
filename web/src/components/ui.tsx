@@ -221,6 +221,110 @@ export function PromptHost() {
   );
 }
 
+/* ---------------- askConfirm：Promise 化的确认框 ---------------- */
+
+/**
+ * 为什么要有它：项目里散着三十多处原生 window.confirm。
+ *
+ * 原生弹窗有三个用户能直接感觉到的问题：
+ *  1. 长得跟整个程序不一样 —— 系统灰底、按钮位置随系统版本变，用户会犹豫「这是日签在问我吗」。
+ *  2. 阻塞整个渲染进程。confirm 挂着的时候界面是死的，动画、输入、滚动全停。
+ *  3. 不能带样式。想强调「删了就找不回来了」只能靠文字加感叹号，
+ *     而真正该做的是把「删除」按钮染成红色、把「取消」放在不会被误点的位置。
+ *
+ * 做法跟上面的 askText 完全一致（zustand store + Host + Promise），
+ * 这样两个弹窗共用同一套 Dialog 骨架，样式天然对齐，也不用再教一遍。
+ *
+ * 用法（必须 await）：
+ *     if (!(await askConfirm('删掉这条？', { danger: '删除' }))) return;
+ */
+interface ConfirmState {
+  open: boolean;
+  title: string;
+  body: string;
+  okText: string;
+  cancelText: string;
+  danger: boolean;
+  resolve: ((v: boolean) => void) | null;
+  ask: (title: string, opt?: ConfirmOpt) => Promise<boolean>;
+  finish: (v: boolean) => void;
+}
+
+export interface ConfirmOpt {
+  /** 正文补充说明，可换行。标题回答「做什么」，正文回答「后果是什么」 */
+  body?: string;
+  /** 确认按钮文案。危险操作务必传「删除 / 清空 / 彻底删除」这类动词，别只写「确定」 */
+  ok?: string;
+  cancel?: string;
+}
+
+const useConfirmStore = create<ConfirmState>()((set, get) => ({
+  open: false,
+  title: '',
+  body: '',
+  okText: '确定',
+  cancelText: '取消',
+  danger: false,
+  resolve: null,
+  ask: (raw, opt) => new Promise<boolean>((resolve) => {
+    /*
+     * 文案拆行：老代码里的 confirm 大多是「一句话 + 换行 + 后果」这种写法，
+     * 例如「把「早起」移到回收站？\n打卡记录会保留，可以在回收站里恢复。」
+     *
+     * 如果整段塞进 <h3> 标题，第二行会跟着标题一起变大变粗，读起来像两句口号。
+     * 所以这里自动把首行当标题、余下当正文 —— 这样迁移时**一个字都不用改**，
+     * 而版式自动就对了。要自定义正文用 opt.body。
+     */
+    const nl = raw.indexOf('\n');
+    const title = nl >= 0 ? raw.slice(0, nl).trim() : raw;
+    const rest = nl >= 0 ? raw.slice(nl + 1).trim() : '';
+    set({
+      open: true,
+      title,
+      body: opt?.body ?? rest,
+      okText: opt?.ok ?? '确定',
+      cancelText: opt?.cancel ?? '取消',
+      // 传了 ok 才算危险操作 —— 不靠猜关键字。猜错的代价是「删除」不红，或者「关闭」被误染成红
+      danger: !!opt?.ok,
+      resolve,
+    });
+  }),
+  finish: (v) => {
+    const r = get().resolve;
+    set({ open: false, resolve: null });
+    r?.(v);
+  },
+}));
+
+export const askConfirm = (title: string, opt?: ConfirmOpt) =>
+  useConfirmStore.getState().ask(title, opt);
+
+export function ConfirmHost() {
+  const { open, title, body, okText, cancelText, danger, finish } = useConfirmStore();
+
+  // 打开时把焦点放到「取消」上：误触回车不该等于删除
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => cancelRef.current?.focus(), 30);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!open) return null;
+  return (
+    <Dialog
+      title={title}
+      onClose={() => finish(false)}
+      footer={<>
+        <button ref={cancelRef} className="btn" onClick={() => finish(false)}>{cancelText}</button>
+        <button className={`btn primary ${danger ? 'danger' : ''}`} onClick={() => finish(true)}>{okText}</button>
+      </>}
+    >
+      {body ? <div className="cfm-body">{body}</div> : null}
+    </Dialog>
+  );
+}
+
 /* ---------------- 轻提示 ---------------- */
 
 /**

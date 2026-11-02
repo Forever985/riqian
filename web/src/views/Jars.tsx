@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Dialog } from '../components/ui';
+import { Dialog, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { useDragSort } from '../components/DragSort';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
@@ -270,7 +270,7 @@ export function Jars({
   };
 
   const removeItem = async (id: string) => {
-    if (!window.confirm('删掉这一笔？它会同时从账本里消失 —— 本来就同一条记录。')) return;
+    if (!(await askConfirm('删掉这一笔？', { body: '它会同时从账本里消失 —— 本来就同一条记录。', ok: '删掉' }))) return;
     await api.jarRemoveItem(id);
     if (detailJar) await openDetail(detailJar);
     await load();
@@ -286,7 +286,7 @@ export function Jars({
   };
 
   const removeJar = async (j: Jar) => {
-    if (!window.confirm(`删掉「${j.name}」？罐子里的 ${amt(j.balance)} 记录会留在账本里，只是不再归属这个罐子。`)) return;
+    if (!(await askConfirm(`删掉「${j.name}」？`, { body: `罐子里的 ${amt(j.balance)} 记录会留在账本里，只是不再归属这个罐子。`, ok: '删掉' }))) return;
     await api.jarDelete(j.id);
     await load();
   };

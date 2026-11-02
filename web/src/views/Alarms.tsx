@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { playAlarmSound, useStore } from '../store';
-import { Topbar } from '../components/ui';
+import { Topbar, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { nowHM } from '../lib/date';
@@ -442,7 +442,7 @@ export function AlarmsView() {
   };
 
   const remove = async (a: AlarmItem) => {
-    if (!window.confirm(`删除「${a.title}」这个提醒？`)) return;
+    if (!(await askConfirm(`删除「${a.title}」这个提醒？`, { ok: '删除' }))) return;
     try {
       await api.alarmDelete(a.id);
       await load();

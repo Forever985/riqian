@@ -11,7 +11,7 @@
  *
  * 生成的滤镜按参数缓存，同一组参数全应用共用一个 <filter>，不会每张图塞一个。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import { Dialog } from '../components/ui';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Topbar, Dialog, askText } from '../components/ui';
+import { Topbar, Dialog, askText, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { ShareDialog, type ShareData } from '../features/share';
 import { WD, cnDateLabel, fmtDate, parseKey, shiftDay, todayKey } from '../lib/date';
@@ -318,7 +318,7 @@ export function ReviewView() {
                     data-act="del"
                     title="删除"
                     onClick={async () => {
-                      if (!confirm(`删除「${h.title}」？只删这份总结，日记不受影响。`)) return;
+                      if (!(await askConfirm(`删除「${h.title}」？`, { body: '只删这份总结，日记不受影响。', ok: '删除' }))) return;
                       await api.summary.remove(h.id);
                       await loadHistory();
                       toast('已删除');

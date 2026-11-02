@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useStore, playChime } from '../store';
-import { Topbar, Dialog, askText } from '../components/ui';
+import { Topbar, Dialog, askText, askConfirm } from '../components/ui';
 import { Icon, ICON_PATHS, type IconName } from '../components/Icons';
 import { ICON_BODY, ICON_SETS, ICON_VIEWBOX, type IconSetKey } from '../components/iconData';
-import { PasswordField } from '../components/Lock';
 import { MediaManager } from '../features/media';
 import { EncourageEditor } from '../features/EncourageEditor';
 import { DiagPanel } from '../features/DiagPanel';
@@ -31,6 +30,7 @@ import { parseRotate } from '../features/bgRotate';
 import { checkPack, parseIconPack, readPackFile, svgToBody, withOneIcon } from '../lib/iconPack';
 import { imgUrl } from '../lib/media';
 import type { Diagnostics } from '../types';
+import { EmptyState } from '../components/EmptyState';
 
 /* ---------------- 分组定义 ---------------- */
 
@@ -99,8 +99,6 @@ function SearchPane({
 export function SettingsView() {
   const settings = useStore((s) => s.settings);
   const root = useStore((s) => s.root);
-  const setSetting = useStore((s) => s.setSetting);
-  const toast = useStore((s) => s.toast);
 
   const [q, setQ] = useState('');
   const [group, setGroup] = useState<GroupKey>('appearance');
@@ -1035,7 +1033,7 @@ function DiarySection() {
               <button
                 className="btn sm ghost"
                 onClick={async () => {
-                  if (!confirm('删除这个模块？它里面的内容会一起删掉。')) return;
+                  if (!(await askConfirm('删除这个模块？', { body: '它里面的内容会一起删掉。', ok: '删除' }))) return;
                   await api.modules.remove(m.id);
                   await reloadModules();
                 }}
@@ -1873,7 +1871,7 @@ function GlobalBgDialog({ onClose }: { onClose: () => void }) {
               <BgThumb item={m} />
             </div>
           </div>
-        )) : <div className="empty" style={{ gridColumn: '1/-1' }}>多媒体库里还没有图片。点上面的「从电脑导入」，或者去「多媒体库」页批量导入。</div>}
+        )) : <EmptyState grid>多媒体库里还没有图片。点上面的「从电脑导入」，或者去「多媒体库」页批量导入。</EmptyState>}
       </div>
 
       {isImg ? (
@@ -1971,7 +1969,7 @@ function GlobalBgDialog({ onClose }: { onClose: () => void }) {
                 ) : null}
               </div>
             );
-          }) : <div className="empty small" style={{ gridColumn: '1/-1' }}>多媒体库里还没有图片</div>}
+          }) : <EmptyState small grid>多媒体库里还没有图片</EmptyState>}
         </div>
 
         <div className="small muted" style={{ marginTop: 8, lineHeight: 1.8 }}>

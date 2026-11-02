@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Dialog, askText } from './ui';
+import { Dialog, askText, askConfirm } from './ui';
 import { Icon } from './Icons';
 import type { VaultQa } from '../types';
 
@@ -104,7 +104,10 @@ export function UnlockBox({
         <button
           className="linkbtn"
           onClick={async () => {
-            if (!confirm('清掉全部密码保护？会删除主密码、所有加锁规则与密保问题。\n\n日记、待办、笔记等内容一条都不会删，但之后任何人都能直接打开。')) return;
+            if (!(await askConfirm('清掉全部密码保护？', {
+              body: '会删除主密码、所有加锁规则与密保问题。\n\n日记、待办、笔记等内容一条都不会删，但之后任何人都能直接打开。',
+              ok: '清掉',
+            }))) return;
             const v = await askText('输入主密码确认（没有主密码就留空）', '', '清空保护需要确认');
             if (v === null) return;
             const r = await api.vault.clearMain(v).catch((e) => ({ ok: false, err: (e as Error).message }));

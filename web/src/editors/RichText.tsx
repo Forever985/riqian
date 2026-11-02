@@ -1,20 +1,47 @@
 import { useEffect, useRef } from 'react';
 import { createEngine } from './engine';
 
+const esc = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 /**
- * 把裸文本包进 `<p>`。
+ * 把裸文本拆成段落。
  *
- * 不是为了好看 —— 没有块级元素时，回车会在编辑器外面插段落（光标跟着跑出去，
- * 后面打的字全部丢失）。历史数据里存的也常是裸文本，所以载入时统一规整一遍。
+ * 两个用途：
+ * 1. 没有块级元素时，回车会在编辑器外面插段落（光标跟着跑出去，后面打的字全部丢失）。
+ * 2. **裸文本里的换行要变成真正的段落**。
+ *
+ * 第 2 点是后补的，起因是一篇「第三季度工作复盘」的长文：
+ * 数据库里存的是没带任何标签的纯文本（`一、本季度完成情况\n1. ...\n\n二、存在的问题`），
+ * 旧实现把整篇包进**一个** `<p>` 就完事，而 `<p>` 里的换行符会被 CSS 折叠成空格 ——
+ * 于是三节带编号的内容挤成一整片，用户看到的是一坨连续文字。
+ *
+ * 拆法跟引擎的粘贴逻辑（`pastePlain`）保持一致：**一个换行 = 一个段落**。
+ * 这个一致性是必须的 —— 否则会出现「刚粘进去分好段了，重开笔记又并回一坨」。
+ * 空行留一个空段落，由 `.nbody p:empty` 撑出一行高度当视觉间隔。
  */
 export function normalizeBlocks(html: string): string {
   if (!html || !html.trim()) return '<p><br></p>';
+
+  // 不含真实标签 → 纯文本，按行拆。走转义而不是直接塞 innerHTML，
+  // 免得正文里出现「a < b」这种字符被浏览器当成半个标签吃掉。
+  if (!/<[a-z][^>]*>/i.test(html)) {
+    const lines = html.split(/\r?\n/);
+    if (lines.length === 1) return `<p>${esc(html)}</p>`;
+    return lines
+      .map((l) => (l.trim() ? `<p>${esc(l)}</p>` : '<p><br></p>'))
+      .join('');
+  }
+
   const box = document.createElement('div');
   box.innerHTML = html;
   const first = box.firstElementChild;
   const isBlock = first && /^(P|DIV|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|TABLE|HR)$/.test(first.tagName);
   if (isBlock) return html;
-  return `<p>${html}</p>`;
+  // 有内联标签但没块级（如 `<b>x</b>\n<i>y</i>`）：同样按行拆
+  const lines = html.split(/\r?\n/);
+  if (lines.length === 1) return `<p>${html}</p>`;
+  return lines.map((l) => (l.trim() ? `<p>${l}</p>` : '<p><br></p>')).join('');
 }
 
 let idSeq = 0;

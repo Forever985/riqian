@@ -15,6 +15,7 @@ import { importImageFiles, imageFilesFromDataTransfer, pickImageFiles } from '..
 import { Icon } from '../components/Icons';
 import { htmlToBb, htmlToMd } from '../lib/htmlToSource';
 import { moduleBgStyle, readModuleBg, veilStyle, writeModuleBg } from '../features/bgRotate';
+import { EmptyState } from '../components/EmptyState';
 
 /* ---------------- 单模块外壳 ---------------- */
 
@@ -156,7 +157,7 @@ function ModuleBgDialog({
                     : <img src={imgUrl(m.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
               </div>
-            )) : <div className="empty small" style={{ gridColumn: '1/-1' }}>多媒体库里还没有图片</div>}
+            )) : <EmptyState small grid>多媒体库里还没有图片</EmptyState>}
           </div>
 
           {src ? (
@@ -937,9 +938,6 @@ export function ModuleBody({ m, date, showToolbar }: { m: JournalModule; date: s
   const values = useStore((s) => s.draft.values);
   const setValue = useStore((s) => s.setValue);
   const scheduleSave = useStore((s) => s.scheduleSave);
-  const modules = useStore((s) => s.modules);
-  const reloadModules = useStore((s) => s.reloadModules);
-
   const val = values[m.id];
   const type = m.type as ModuleType;
 
@@ -1075,7 +1073,6 @@ export function ModuleBody({ m, date, showToolbar }: { m: JournalModule; date: s
 export function ModuleList({ date }: { date: string }) {
   const modules = useStore((s) => s.modules);
   const toast = useStore((s) => s.toast);
-  const reloadModules = useStore((s) => s.reloadModules);
   /**
    * 第 237 条：这一篇日记里临时藏掉的模块 id。
    *

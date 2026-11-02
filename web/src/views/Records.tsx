@@ -7,7 +7,6 @@ import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { TimelineView } from './Timeline';
 import { entryHasMedia } from '../features/media';
 import { Topbar } from '../components/ui';
-import { Icon } from '../components/Icons';
 import { MOODS } from '../lib/const';
 import { WD, parseKey } from '../lib/date';
 import type { EntryListItem } from '../types';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Topbar, Dialog } from '../components/ui';
+import { Topbar, Dialog, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { SortBar, type SortDir, type SortOption } from '../components/SortBar';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
@@ -323,7 +323,7 @@ export function DraftsView() {
               <button
                 className="btn sm danger"
                 onClick={async () => {
-                  if (!window.confirm(`彻底删掉 ${d.date} 这一天？删了就找不回来了。`)) return;
+                  if (!(await askConfirm(`彻底删掉 ${d.date} 这一天？`, { body: '删了就找不回来了。', ok: '彻底删除' }))) return;
                   const r = await api.drafts.purge(d.date);
                   if (!r.ok) { toast(r.err || '没删掉'); return; }
                   await loadTrash();

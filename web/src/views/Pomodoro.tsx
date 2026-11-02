@@ -37,7 +37,6 @@ export function PomodoroView() {
   const pomo = useStore((s) => s.pomo);
   const pomoDone = useStore((s) => s.pomoDone);
   const settings = useStore((s) => s.settings);
-  const go = useStore((s) => s.go);
   const toast = useStore((s) => s.toast);
 
   const start = useStore((s) => s.pomoStart);

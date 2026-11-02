@@ -5,7 +5,8 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import { Dialog } from '../components/ui';
+import { Dialog, askConfirm } from '../components/ui';
+import { ColorDots } from '../components/ColorDots';
 import { shiftDay, todayKey } from '../lib/date';
 import type { Todo, TodoList } from '../types';
 
@@ -460,7 +461,7 @@ export function TodoListDialog({
           <button
             className="btn danger"
             onClick={async () => {
-              if (!confirm(`删除清单「${list.name}」？里面的任务会退回收集箱，不会被删。`)) return;
+              if (!(await askConfirm(`删除清单「${list.name}」？`, { body: '里面的任务会退回收集箱，不会被删。', ok: '删除' }))) return;
               await api.todos.removeList(list.id);
               await reloadTodoLists();
               await reloadTodos();
@@ -510,18 +511,7 @@ export function TodoListDialog({
       </div>
       <div className="field">
         <label>颜色</label>
-        <div className="row" style={{ gap: 7 }}>
-          {LIST_COLORS.map((c) => (
-            <span
-              key={c}
-              onClick={() => setColor(c)}
-              style={{
-                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
-              }}
-            />
-          ))}
-        </div>
+        <ColorDots colors={LIST_COLORS} value={color} onPick={setColor} />
       </div>
       <div className="small muted" style={{ marginTop: 10, lineHeight: 1.7 }}>
         左侧清单可以直接按住拖动排序，这里也能上移 / 下移。

@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { Dialog } from '../components/ui';
+import { EmptyState } from '../components/EmptyState';
 import {
   FONT_GROUP_NAME, FONT_PRESETS, humanSize, importFamilyCss, isImportFamily,
   loadImportedFont, forgetImportedFont, type ImportedFont, type FontPreset,
@@ -184,9 +185,9 @@ export function FontPicker({
             导入只是把文件复制进来，不会动你原来的文件；删也只是删这个副本。
           </div>
           {!pack?.items?.length ? (
-            <div className="empty" style={{ padding: '24px 0', textAlign: 'center', opacity: 0.7 }}>
+            <EmptyState center>
               还没有导入任何字体。点「导入字体」选 .woff2 / .ttf / .otf 文件。
-            </div>
+            </EmptyState>
           ) : (
             <div className="fonts-table">
               {pack.items.map((f) => (

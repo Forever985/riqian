@@ -18,6 +18,7 @@ import { useStore } from '../store';
 import { Icon } from '../components/Icons';
 import { imgUrl } from '../lib/media';
 import { ColorPicker, normalizeHex } from './colorPicker';
+import { askConfirm } from '../components/ui';
 
 /* ---------------- 数据形状 ---------------- */
 
@@ -197,13 +198,14 @@ export function DrawBoard({
 
   /* Esc 关闭（脏了先问一句） */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = async (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (dirty && !window.confirm('画板还没保存，直接关掉吗？')) return;
+      if (dirty && !(await askConfirm('画板还没保存，直接关掉吗？', { ok: '关掉' }))) return;
       onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const h = (e: KeyboardEvent) => void onKey(e);
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
   }, [dirty, onClose]);
 
   /* ---------------- 指针 ---------------- */
@@ -265,9 +267,9 @@ export function DrawBoard({
     setDirty(true);
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!strokes.length) return;
-    if (!window.confirm('清空整块画板？（还没保存的话，清掉就找不回来了）')) return;
+    if (!(await askConfirm('清空整块画板？', { body: '还没保存的话，清掉就找不回来了。', ok: '清空' }))) return;
     setStrokes([]);
     setDirty(true);
   };
@@ -348,8 +350,8 @@ export function DrawBoard({
               onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
             />
           </h3>
-          <button className="x" title="关闭" onClick={() => {
-            if (dirty && !window.confirm('画板还没保存，直接关掉吗？')) return;
+          <button className="x" title="关闭" onClick={async () => {
+            if (dirty && !(await askConfirm('画板还没保存，直接关掉吗？', { ok: '关掉' }))) return;
             onClose();
           }}>✕</button>
         </div>
@@ -497,7 +499,7 @@ export function DrawList({ onOpen }: { onOpen: (id: string) => void }) {
   useEffect(() => { void load(); }, [load]);
 
   const del = async (id: string, title: string) => {
-    if (!window.confirm(`删除画板「${title}」？会先进回收站，还能找回来。`)) return;
+    if (!(await askConfirm(`删除画板「${title}」？`, { body: '会先进回收站，还能找回来。', ok: '删除' }))) return;
     await api.draw.remove(id, 0);
     await load();
     toast('已移到回收站');

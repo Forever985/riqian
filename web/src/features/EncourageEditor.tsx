@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { Icon } from '../components/Icons';
 import { imgUrl } from '../lib/media';
 import type { EncourageItem } from '../types';
+import { askConfirm } from '../components/ui';
 
 /**
  * 第 211 条：首页「给自己的一句话」的内容维护。
@@ -84,7 +85,7 @@ export function EncourageEditor() {
   };
 
   const remove = async (it: EncourageItem) => {
-    if (!confirm('删掉这条？首页就不会再轮到它了。')) return;
+    if (!(await askConfirm('删掉这条？', { body: '首页就不会再轮到它了。', ok: '删掉' }))) return;
     await api.encourageDelete(it.id);
     await reload();
   };

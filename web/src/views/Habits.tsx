@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useStore } from '../store';
 import { useDragSort } from '../components/DragSort';
-import { Topbar, Dialog } from '../components/ui';
+import { Topbar, Dialog, askConfirm } from '../components/ui';
+import { ColorDots } from '../components/ColorDots';
 import { HabitWidget, HabitSpark, habitIsDone } from '../modules/HabitWidget';
 import { HabitStatsPanel } from '../features/habitStats';
 import { COLORS, HABIT_TYPE_NAME } from '../lib/const';
@@ -92,18 +93,7 @@ function HabitEditor({ habit, onClose }: { habit: Habit | null; onClose: () => v
       </div>
       <div className="field">
         <label>颜色</label>
-        <div className="row" style={{ gap: 7 }}>
-          {COLORS.map((c) => (
-            <span
-              key={c}
-              onClick={() => setColor(c)}
-              style={{
-                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
-              }}
-            />
-          ))}
-        </div>
+        <ColorDots colors={COLORS} value={color} onPick={setColor} />
       </div>
     </Dialog>
   );
@@ -268,7 +258,7 @@ function HabitManage({
   };
 
   const remove = async (h: Habit) => {
-    if (!confirm(`把「${h.name}」移到回收站？\n打卡记录会保留，可以在回收站里恢复。`)) return;
+    if (!(await askConfirm(`把「${h.name}」移到回收站？`, { body: '打卡记录会保留，可以在回收站里恢复。', ok: '移到回收站' }))) return;
     await api.habitDelete(h.id);
     await reloadHabits();
     toast('已移到回收站');
@@ -336,7 +326,7 @@ function HabitTrashDialog({ onClose, onChanged }: { onClose: () => void; onChang
   };
 
   const purge = async (x: TrashItem) => {
-    if (!confirm(`彻底删除「${x.name}」？\n会连它的全部打卡记录一起删掉，删了就找不回来了。`)) return;
+    if (!(await askConfirm(`彻底删除「${x.name}」？`, { body: '会连它的全部打卡记录一起删掉，删了就找不回来了。', ok: '彻底删除' }))) return;
     setBusy(true);
     try {
       await api.habitPurge(x.id);
@@ -440,7 +430,7 @@ export function HabitsView() {
   };
 
   const deleteHabit = async (h: Habit) => {
-    if (!confirm(`把「${h.name}」移到回收站？\n打卡记录会保留，可以在回收站里恢复。`)) return;
+    if (!(await askConfirm(`把「${h.name}」移到回收站？`, { body: '打卡记录会保留，可以在回收站里恢复。', ok: '移到回收站' }))) return;
     try {
       await api.habitDelete(h.id);
       await reloadHabits();

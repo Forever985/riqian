@@ -57,6 +57,24 @@ namespace Riqian
         {
             try
             {
+                /*
+                 * 用户报的「又莫名其妙弹出来这个记事本了」，根子就在这里。
+                 *
+                 * 老板键（ToggleBoss）做的是：Hide() 主窗 → 显示一个标题为「记事本」的伪装窗。
+                 * 但 ShowMain 只 Show() 主窗，**从来没检查过老板键是不是还开着**，
+                 * 于是从托盘「打开日签」/ 双击托盘图标 / 点悬浮球 / 按唤出热键这几条路进来的话，
+                 * 结果是：主窗回来了，伪装窗也还在，而且它最后被 Activate() 过，压在桌面最前面。
+                 * 用户看到的就是「凭空又多了一个记事本」，关掉它主窗又跟着消失 —— 越点越乱。
+                 *
+                 * 正确语义：任何「把日签叫出来」的动作，都意味着退出伪装状态。
+                 */
+                if (_bossOn || (_disguise != null && !_disguise.IsDisposed && _disguise.Visible))
+                {
+                    _bossOn = false;
+                    try { if (_disguise != null && !_disguise.IsDisposed) _disguise.Hide(); } catch { }
+                    Diag.Info("boss", "从其它入口唤回主窗，已自动退出伪装");
+                }
+
                 Show();
                 WindowState = FormWindowState.Normal;
                 Activate();

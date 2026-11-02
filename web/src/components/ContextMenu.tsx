@@ -14,6 +14,7 @@
  * 只有「另存为 / 检查」这些，对用户没意义），所以自己画一个。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { askConfirm } from './ui';
 
 export interface MenuItem {
   /** 分隔线 */
@@ -28,6 +29,8 @@ export interface MenuItem {
   disabled?: boolean;
   /** 点之前问一句 */
   confirm?: string;
+  /** 确认框里那颗按钮的字（比如「删除」「移到回收站」）。不传就是「确定」 */
+  confirmOk?: string;
   onClick?: () => void | Promise<void>;
 }
 
@@ -122,7 +125,7 @@ export function useContextMenu() {
             data-ctx-label={it.label}
             onClick={async () => {
               if (it.disabled) return;
-              if (it.confirm && !window.confirm(it.confirm)) return;
+              if (it.confirm && !(await askConfirm(it.confirm, it.confirmOk ? { ok: it.confirmOk } : undefined))) return;
               close();
               await it.onClick?.();
             }}

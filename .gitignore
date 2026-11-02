@@ -41,3 +41,8 @@ tools/prune-backup.sh
 *~
 Thumbs.db
 desktop.ini
+
+# 临时编译验证目录（避免锁住正在运行的 exe）
+bin_v13/
+obj_check/
+bin_check/

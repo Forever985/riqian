@@ -3,7 +3,7 @@ import { api } from '../api';
 import { todoSortMode, useStore } from '../store';
 import { useDragSort } from '../components/DragSort';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
-import { Topbar } from '../components/ui';
+import { Topbar, askConfirm } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { shiftDay, todayKey } from '../lib/date';
 import { parseSmartDate, repeatCode, repeatLabel } from '../lib/smartDate';
@@ -453,7 +453,7 @@ export function TodosView() {
               <button
                 className="btn sm ghost" title="彻底删除，无法找回"
                 onClick={async () => {
-                  if (!confirm(`彻底删除「${t.title}」？删除后无法恢复。`)) return;
+                  if (!(await askConfirm(`彻底删除「${t.title}」？`, { body: '删除后无法恢复。', ok: '彻底删除' }))) return;
                   await api.todos.purge(t.id);
                   await loadRecycle();
                   toast('已彻底删除');

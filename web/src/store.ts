@@ -7,7 +7,7 @@ import type {
 import { imgUrl, setMediaIndex } from './lib/media';
 import { applyAppearance } from './lib/theme';
 import { setView } from './lib/diag';
-import { inHMWindow, realTodayKey, setDayStart, shortDateLabel, todayKey } from './lib/date';
+import { inHMWindow, setDayStart, shortDateLabel, todayKey } from './lib/date';
 
 export interface Draft {
   /** 键是模块 id；Markdown / BBCode 的源码存在 `${id}:md`、`${id}:bb`，跟数据库里的存法一致 */
