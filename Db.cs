@@ -28,6 +28,31 @@ namespace Riqian
         private SqliteConnection conn;
         private string backedUpDay = "";
 
+        /* ==================================================================
+         * 账户余额的口径 —— 只在这里定义一次，别处一律引用。
+         *
+         * 为什么必须集中：ledger 里 kind 这个字段对**两类流水**含义是相反的。
+         *
+         *   · 普通流水（jar_id 为空）：kind='in' 表示钱进入账户 → 余额 +
+         *   · 罐子流水（jar_id 非空）：kind='in' 表示钱进入**罐子** → 账户余额 −
+         *
+         * 储蓄罐存取时，钱确实离开了账户，但方向跟 kind 刚好相反。
+         * 之前 LedgerAccounts 和 LedgerInsight 各写了一份 SUM(CASE WHEN kind='in' ...)，
+         * 两处都漏掉了这个反转，结果存 100 块进罐子，账户余额反而 +100，
+         * 「账户 + 罐子」的总资产凭空多出一倍。
+         *
+         * 现在把它抽成一个常量，两边都拼这同一段 —— 以后改口径只改一处，
+         * 不会再出现"这页对了那页还错"的情况。
+         * ================================================================== */
+        internal const string AccountDeltaSql =
+            @"SUM(CASE
+                  WHEN IFNULL(jar_id,'')<>'' THEN (CASE WHEN kind='in' THEN -amount ELSE amount END)
+                  ELSE (CASE WHEN kind='in' THEN amount ELSE -amount END)
+              END)";
+
+        /// <summary>罐子余额：kind 在罐子语境里本来就是对的（in 存进来 +，out 取出去 −）。</summary>
+        internal const string JarBalanceSql = "SUM(CASE WHEN kind='in' THEN amount ELSE -amount END)";
+
         public static string Today => DateTime.Now.ToString("yyyy-MM-dd");
         private static string Now => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -1023,10 +1048,33 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
 
         public object TagSet(string date, string[] tags)
         {
-            Exec("DELETE FROM entry_tags WHERE date=$d", ("$d", date));
-            foreach (var t in tags.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
-                Exec("INSERT OR IGNORE INTO entry_tags(date,tag) VALUES($d,$t)", ("$d", date), ("$t", t.Trim()));
-            return new { ok = true };
+            if (string.IsNullOrWhiteSpace(date)) return new { ok = false, err = "没指定哪一天" };
+
+            /* 必须先洗一遍再动手：原来是"先删光、再一条条插"，
+               万一半路抛异常（非法字符、约束冲突、磁盘满），
+               用户原有的标签已经没了，新的只进去一半 —— 净损失。
+               现在整段包在事务里，要么全换掉，要么原样不动。 */
+            var clean = (tags ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Where(x => x.Length > 0 && x.Length <= 40)
+                .Distinct()
+                .ToArray();
+
+            try
+            {
+                Exec("BEGIN;");
+                Exec("DELETE FROM entry_tags WHERE date=$d", ("$d", date));
+                foreach (var t in clean)
+                    Exec("INSERT OR IGNORE INTO entry_tags(date,tag) VALUES($d,$t)", ("$d", date), ("$t", t));
+                Exec("COMMIT;");
+                return new { ok = true, count = clean.Length };
+            }
+            catch (Exception ex)
+            {
+                try { Exec("ROLLBACK;"); } catch { }
+                return new { ok = false, err = ex.Message };
+            }
         }
 
         /* ---------------- 关联 / 引用 ---------------- */
@@ -1385,7 +1433,9 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                     note = Str(r["note"]),
                     days = (int)(target.Date - today).TotalDays,
                     nextDate = target.ToString("yyyy-MM-dd"),
-                    sort = Int(r["sort"])
+                    sort = Int(r["sort"]),
+                    /* 第 101 条：重要 = 星标。老库没这列时当 0，不显示星也不进「重要」两格 */
+                    star = r.ContainsKey("star") ? Int(r["star"]) : 0
                 };
             }).ToList();
         }
@@ -1402,12 +1452,14 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             return new { ok = true, id };
         }
 
-        public object CdUpdate(string id, string title, string date, int yearly, string color, string note, int sort = -1, string repeat = null)
+        public object CdUpdate(string id, string title, string date, int yearly, string color, string note, int sort = -1, string repeat = null, int star = -1)
         {
             if (string.IsNullOrEmpty(id)) return new { ok = false };
             // 第 145 条：拖动排序和「改重复方式」也要能走同一个入口
             if (sort >= 0) Exec("UPDATE countdowns SET sort=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", sort), ("$i", id), ("$t", Now));
             if (repeat != null) Exec("UPDATE countdowns SET repeat=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", repeat), ("$i", id), ("$t", Now));
+            /* 第 101 条：星标 -1 = 这次不动它（和其它字段的 null 约定一致） */
+            if (star >= 0) Exec("UPDATE countdowns SET star=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", star), ("$i", id), ("$t", Now));
             if (title != null) Exec("UPDATE countdowns SET title=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", title), ("$i", id), ("$t", Now));
             if (date != null) Exec("UPDATE countdowns SET date=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", date), ("$i", id), ("$t", Now));
             if (yearly >= 0) Exec("UPDATE countdowns SET yearly=$v, updated_at=$t, rev=rev+1 WHERE id=$i", ("$v", yearly), ("$i", id), ("$t", Now));
@@ -2326,9 +2378,30 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             }
         }
 
-        public object Overview()
+        public object Overview(string from = null, string to = null)
         {
-            var rows = Rows(@"SELECT e.date, e.plain, e.updated_at FROM entries e ORDER BY e.date DESC");
+            /*
+             * 第 12 条：用户要「更多元、更多角度、更详细」，并点出缺自定义时间区间。
+             * 以前所有数字都是「 lifetime 全量」，想看「这三个月写了多少」只能自己去日历里翻。
+             *
+             * 这里的做法：把区间做成两个可选参数，能挂的地方都挂上 ——
+             *   · 日记相关的（条数 / 字数 / 活跃天 / 心情 / 标签 / 月分布）：按 date 过滤
+             *   · 打卡：按 habit_logs.date 过滤
+             *   · 番茄：按 pomodoro.date 过滤
+             *   · 待办：按 done_at 过滤已完成数；未完成数是「当前状态」没法切区间，保持全量
+             *   · 连续天数 / 最长连续：这两个天然是「横跨全历史」的指标，切区间就没意义，
+             *     保持全量，但前端会标注出来，避免用户误读。
+             * 不传就是全量，行为跟以前完全一致（reset / 其它调用点不用改）。
+             */
+            var hasFrom = !string.IsNullOrWhiteSpace(from) && from.Length >= 8;
+            var hasTo = !string.IsNullOrWhiteSpace(to) && to.Length >= 8;
+            var rangeSql = "";
+            var rangeArgs = new List<(string, object)>();
+            if (hasFrom) { rangeSql += " AND date >= $from"; rangeArgs.Add(("$from", from)); }
+            if (hasTo) { rangeSql += " AND date <= $to"; rangeArgs.Add(("$to", to)); }
+
+            var rows = Rows("SELECT e.date, e.plain, e.updated_at FROM entries e WHERE 1=1" + rangeSql + " ORDER BY e.date DESC",
+                rangeArgs.ToArray());
             var perDay = new List<object>();
             var activeDates = new List<DateTime>();
             int totalChars = 0, activeDays = 0, maxChars = 0;
@@ -2378,15 +2451,54 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
 
             var moodDist = new int[6];
             for (int i = 1; i <= 5; i++)
-                moodDist[i] = Int(Scalar("SELECT COUNT(*) FROM vals WHERE val=$v AND module_id IN (SELECT id FROM modules WHERE type='mood')", ("$v", i.ToString())));
+                moodDist[i] = Int(Scalar(
+                    "SELECT COUNT(*) FROM vals WHERE val=$v AND module_id IN (SELECT id FROM modules WHERE type='mood')"
+                    + (hasFrom || hasTo ? " AND date IN (SELECT date FROM entries WHERE 1=1" + rangeSql + ")" : ""),
+                    new List<(string, object)>(rangeArgs) { ("$v", i.ToString()) }.ToArray()));
 
-            var monthWords = Rows(@"SELECT substr(date,1,7) AS m, COUNT(*) AS n FROM entries GROUP BY m ORDER BY m DESC LIMIT 8")
+            var monthWords = Rows(@"SELECT substr(date,1,7) AS m, COUNT(*) AS n FROM entries WHERE 1=1" + rangeSql + " GROUP BY m ORDER BY m DESC LIMIT 8",
+                    rangeArgs.ToArray())
                 .Select(r => new { m = Str(r["m"]), n = Int(r["n"]) }).ToList();
 
-            var tagTop = Rows(@"SELECT tag, COUNT(*) AS n FROM entry_tags GROUP BY tag ORDER BY n DESC, tag LIMIT 10")
+            var tagTop = Rows(@"SELECT tag, COUNT(*) AS n FROM entry_tags WHERE 1=1"
+                    + (hasFrom || hasTo ? " AND date IN (SELECT date FROM entries WHERE 1=1" + rangeSql + ")" : "")
+                    + " GROUP BY tag ORDER BY n DESC, tag LIMIT 10",
+                    rangeArgs.ToArray())
                 .Select(r => new { tag = Str(r["tag"]), n = Int(r["n"]) }).ToList();
 
             var firstLast = Rows("SELECT MIN(date) AS a, MAX(date) AS b FROM entries WHERE LENGTH(plain)>0").FirstOrDefault();
+
+            /* 区间内的「第一天 / 最后一天」—— 顶栏那句「x 起 · 共 n 天」在切了区间之后要跟着变，
+               否则用户选了 3 个月，抬头还是「2023-01-01 起 · 共 900 天」，会以为是 bug。 */
+            var inRange = Rows("SELECT MIN(date) AS a, MAX(date) AS b, COUNT(*) AS n FROM entries WHERE LENGTH(plain)>0"
+                    + rangeSql, rangeArgs.ToArray()).FirstOrDefault();
+
+            /* 第 12 条：区间内的打卡 / 番茄也要能切，不然「这个月」的标题下面挂的是全量数字 */
+            var logRange = " AND IFNULL(date,'')>=$lx AND IFNULL(date,'')<=$ly";
+            var logArgs = new[]
+            {
+                ("$lx", (object)(hasFrom ? from : "0000-00-00")),
+                ("$ly", (object)(hasTo ? to : "9999-99-99")),
+            };
+
+            /* 待办已完成数：done_at 是纯日期，只有切了区间才过滤 */
+            var todoDoneSql = "SELECT COUNT(*) FROM todos WHERE done=1 AND trashed=0 AND deleted_at IS NULL";
+            var todoDoneArgs = new List<(string, object)>();
+            if (hasFrom) { todoDoneSql += " AND IFNULL(done_at,'')>=$f"; todoDoneArgs.Add(("$f", from)); }
+            if (hasTo) { todoDoneSql += " AND IFNULL(done_at,'')<=$t"; todoDoneArgs.Add(("$t", to)); }
+
+            /* 区间跨度：用 entries 里落在区间内的最早/最晚一天，没有就退回区间本身 */
+            var rdA = Str(inRange?["a"]);
+            var rdB = Str(inRange?["b"]);
+            var rangeDays = 0;
+            if (rdA != "" && rdB != ""
+                && DateTime.TryParse(rdA, CultureInfo.InvariantCulture, DateTimeStyles.None, out var rdtA)
+                && DateTime.TryParse(rdB, CultureInfo.InvariantCulture, DateTimeStyles.None, out var rdtB))
+                rangeDays = (int)(rdtB - rdtA).TotalDays + 1;
+            else if (hasFrom && hasTo
+                && DateTime.TryParse(from, CultureInfo.InvariantCulture, DateTimeStyles.None, out var fdt)
+                && DateTime.TryParse(to, CultureInfo.InvariantCulture, DateTimeStyles.None, out var tdt))
+                rangeDays = Math.Max(0, (int)(tdt - fdt).TotalDays + 1);
 
             return new
             {
@@ -2400,12 +2512,12 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                 todos = new
                 {
                     open = Int(Scalar("SELECT COUNT(*) FROM todos WHERE done=0 AND trashed=0 AND deleted_at IS NULL")),
-                    done = Int(Scalar("SELECT COUNT(*) FROM todos WHERE done=1 AND trashed=0 AND deleted_at IS NULL")),
+                    done = Int(Scalar(todoDoneSql, todoDoneArgs.ToArray())),
                     trashed = Int(Scalar("SELECT COUNT(*) FROM todos WHERE trashed=1 AND deleted_at IS NULL")),
                     done7 = Int(Scalar("SELECT COUNT(*) FROM todos WHERE done=1 AND trashed=0 AND deleted_at IS NULL AND done_at>=$f",
                         ("$f", DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"))))
                 },
-                favorites = Int(Scalar("SELECT COUNT(*) FROM entries WHERE fav=1")),
+                favorites = Int(Scalar("SELECT COUNT(*) FROM entries WHERE fav=1" + rangeSql, rangeArgs.ToArray())),
                 links = Int(Scalar("SELECT COUNT(*) FROM links")),
                 // —— 下面这些是这次新增的统计维度 ——
                 longestStreak,
@@ -2417,13 +2529,18 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                 firstDate = Str(firstLast?["a"]),
                 lastDate = Str(firstLast?["b"]),
                 mediaCount = Int(Scalar("SELECT COUNT(*) FROM media WHERE deleted_at IS NULL")),
-                habitLogs = Int(Scalar("SELECT COUNT(*) FROM habit_logs WHERE val NOT IN ('','0','[]','null')")),
-                habitNotes = Int(Scalar("SELECT COUNT(*) FROM habit_logs WHERE IFNULL(note,'')<>''")),
-                pomodoroCount = Int(Scalar("SELECT COUNT(*) FROM pomodoro WHERE kind='focus'")),
-                pomodoroMinutes = Int(Scalar("SELECT IFNULL(SUM(minutes),0) FROM pomodoro WHERE kind='focus'")),
+                habitLogs = Int(Scalar("SELECT COUNT(*) FROM habit_logs WHERE val NOT IN ('','0','[]','null')" + logRange, logArgs)),
+                habitNotes = Int(Scalar("SELECT COUNT(*) FROM habit_logs WHERE IFNULL(note,'')<>''" + logRange, logArgs)),
+                pomodoroCount = Int(Scalar("SELECT COUNT(*) FROM pomodoro WHERE kind='focus'" + logRange, logArgs)),
+                pomodoroMinutes = Int(Scalar("SELECT IFNULL(SUM(minutes),0) FROM pomodoro WHERE kind='focus'" + logRange, logArgs)),
                 countdowns = Int(Scalar("SELECT COUNT(*) FROM countdowns WHERE deleted_at IS NULL")),
                 templates = Int(Scalar("SELECT COUNT(*) FROM templates")),
-                updatedAt = rows.Count > 0 ? Str(rows[0]["updated_at"]) : null
+                updatedAt = rows.Count > 0 ? Str(rows[0]["updated_at"]) : null,
+                /* 回给前端：这次到底切没切区间、切的是哪一段。
+                   前端顶栏和「核心」卡片都靠这两个字段决定要不要加「（区间内）」的注脚。 */
+                rangeFrom = hasFrom ? from : null,
+                rangeTo = hasTo ? to : null,
+                rangeDays
             };
         }
 
@@ -2552,6 +2669,34 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             return new { ok = true, path };
         }
 
+        /// <summary>把 WAL 里的内容并回主库文件，然后报一下两边的大小。</summary>
+        public object ForceCheckpoint()
+        {
+            long WalBytes()
+            {
+                try { var f = DbPath + "-wal"; return File.Exists(f) ? new FileInfo(f).Length : 0; }
+                catch { return -1; }
+            }
+            var before = WalBytes();
+            int busy;
+            try
+            {
+                // wal_checkpoint 返回 (busy, log, checkpointed)，busy=0 说明没有别的连接挡着
+                var r = Rows("PRAGMA wal_checkpoint(TRUNCATE);").FirstOrDefault();
+                busy = r == null ? -1 : Int(r["busy"]);
+            }
+            catch { busy = -1; }
+            var after = WalBytes();
+            return new
+            {
+                ok = after >= 0 && after < Math.Max(before, 1),
+                busy,
+                walBefore = before,
+                walAfter = after,
+                dbBytes = File.Exists(DbPath) ? new FileInfo(DbPath).Length : 0,
+            };
+        }
+
         /* ---------------- 路径迁移 ---------------- */
 
         public object ChangeRoot(string newRoot)
@@ -2559,18 +2704,63 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             if (string.IsNullOrWhiteSpace(newRoot)) return new { ok = false, err = "路径为空" };
             if (string.Equals(Path.GetFullPath(newRoot), Path.GetFullPath(Root), StringComparison.OrdinalIgnoreCase))
                 return new { ok = false, err = "已经是这个路径" };
+
+            /* 先留好老状态，万一后面任何一步失败都要能原样退回去。
+               conn 是 Open() 里 new 出来的对象，关掉之后必须重新 Open()，
+               否则 conn 停在 Closed 状态，之后每一次读写都会报"连接未打开" ——
+               界面还在、按钮还能点、但什么都存不进去，只能重启。 */
+            var oldRoot = Root;
+            var oldDb = DbPath;
+            var oldMedia = MediaDir;
+            var oldBackup = BackupDir;
+            var oldExport = ExportDir;
+
+            var dst = Path.Combine(newRoot, "riqian.db");
+            var dstMedia = Path.Combine(newRoot, "图片库");
+
             try
             {
                 Directory.CreateDirectory(newRoot);
-                Directory.CreateDirectory(Path.Combine(newRoot, "图片库"));
+                Directory.CreateDirectory(dstMedia);
+
+                /*
+                 * 第 1 步：把 WAL 里的东西并回主库文件。
+                 *
+                 * 库是 PRAGMA journal_mode=WAL，已提交但还没 checkpoint 的页全在 riqian.db-wal 里，
+                 * 主库文件可能只有真实数据的一小部分（实测 356 KB vs 2.77 MB）。
+                 * File.Copy 只拷主库，直接拷就会丢掉绝大部分数据。
+                 * checkpoint(TRUNCATE) 之后 -wal 归零，主库文件才是完整的。
+                 *
+                 * 和 DailyBackup（同文件 466 行）保持同一套做法，别再各写各的。
+                 */
+                try { Exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { }
+
                 conn.Close();
-                var dst = Path.Combine(newRoot, "riqian.db");
+
+                // 第 2 步：目标已存在就先挪开，别让新数据覆盖掉用户上一次迁移留下的库
+                if (File.Exists(dst))
+                {
+                    var bak = dst + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                    try { File.Copy(dst, bak, true); } catch { }
+                }
                 File.Copy(DbPath, dst, true);
+
+                // 第 3 步：媒体文件。用 FileName 逐个拷，源和目标相同时跳过（防自我覆盖报错）
                 foreach (var f in Directory.GetFiles(MediaDir))
-                    File.Copy(f, Path.Combine(newRoot, "图片库", Path.GetFileName(f)), true);
+                {
+                    var target = Path.Combine(dstMedia, Path.GetFileName(f));
+                    if (string.Equals(Path.GetFullPath(f), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    File.Copy(f, target, true);
+                }
+
+                // 第 4 步：验一遍拷出来的库是不是好的。坏的就别切换过去，留在原地更安全
+                if (!IntegrityOk(dst))
+                    throw new InvalidOperationException("拷出来的数据库完整性校验没通过，已中止迁移（原数据没动）");
+
                 Root = newRoot;
                 DbPath = dst;
-                MediaDir = Path.Combine(newRoot, "图片库");
+                MediaDir = dstMedia;
                 BackupDir = Path.Combine(newRoot, "自动备份");
                 ExportDir = Path.Combine(newRoot, "导出");
                 Open();
@@ -2578,8 +2768,42 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             }
             catch (Exception ex)
             {
+                // 无论哪一步炸了，都要退回到老路径并把连接重新打开
+                Root = oldRoot;
+                DbPath = oldDb;
+                MediaDir = oldMedia;
+                BackupDir = oldBackup;
+                ExportDir = oldExport;
+                try { if (conn.State != System.Data.ConnectionState.Open) Open(); }
+                catch { }
                 return new { ok = false, err = ex.Message };
             }
+        }
+
+        /// <summary>拷完的库能不能读、页面有没有坏。用独立连接读，不碰主连接。</summary>
+        private static bool IntegrityOk(string path)
+        {
+            /* 先试着只读打开（最干净，不会在目标目录留文件）。
+               如果 -wal 还在（checkpoint 那步被 catch 吞掉时会这样），只读连接
+               建不出 -shm 会直接失败 —— 那不是库坏，是打开方式不对，
+               所以再退一步用可写方式打开，让 SQLite 自己回放 WAL。 */
+            foreach (var mode in new[] { ";Mode=ReadOnly", "" })
+            {
+                try
+                {
+                    using var c = new SqliteConnection("Data Source=" + path + mode);
+                    c.Open();
+                    using var cmd = c.CreateCommand();
+                    cmd.CommandText = "PRAGMA integrity_check;";
+                    var r = cmd.ExecuteScalar();
+                    return r != null && string.Equals(r.ToString(), "ok", StringComparison.OrdinalIgnoreCase);
+                }
+                catch
+                {
+                    // 换一种打开方式再试
+                }
+            }
+            return false;
         }
     }
 }

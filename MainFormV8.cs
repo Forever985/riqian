@@ -28,6 +28,9 @@ namespace Riqian
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
         [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
+
+        [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
         private const int WM_HOTKEY = 0x0312;
@@ -231,6 +234,10 @@ namespace Riqian
             ["pomo"]  = ("开始番茄钟", f => f.StartPomoFromTray(f.TrayPomoMinutes())),
             ["boss"]  = ("隐形模式", f => f.ToggleBoss()),
             ["lock"]  = ("立即锁定", f => f.HostCmd("lock")),
+            /* 第 75 条：用户说「小锁 icon 或者 Logo 什么的……托盘里面也要」。
+               托盘本来就常驻，但界面锁了之后图标还是那个「签」，看不出状态。
+               这一项把「现在锁着没」直接画在图标上。 */
+            ["lockstate"] = ("锁状态显示在托盘图标上", f => f.ToggleTrayLockIcon()),
             ["hide"]  = ("隐藏窗口", f => f.HideToTray()),
             ["quit"]  = ("退出日签", f => f.QuitApp()),
         };
@@ -260,6 +267,100 @@ namespace Riqian
             // pomoPreset 是用户设的「默认专注时长」，没有就用 25
             if (int.TryParse(s.GetValueOrDefault("pomoPreset", "25"), out var m) && m > 0) return Math.Min(240, m);
             return 25;
+        }
+
+        /* ========== 第 75 条：托盘图标反映「当前锁没锁」 ==========
+         *
+         * 用户原话：「小锁 icon 或者 Logo 什么的……托盘里面也要」。
+         * 托盘本来就常驻，但界面锁上之后图标还是那个「签」，一眼看不出状态 ——
+         * 尤其老板键伪装 / 离开工位的时候，用户需要一个「瞟一眼就知道锁了没」的信号。
+         *
+         * 做法：不换整套图标资源（那要重新打包 ico），而是在原图标右下角叠一个小锁/开锁角标。
+         *   trayLockIcon = 0  → 关掉这个特性，托盘永远是原图标
+         *   trayLockIcon = 1  → 锁着时叠一把实心小锁，解锁后回到原图标
+         */
+        private bool _trayLocked;
+        private Icon _trayBaseIcon;
+
+        /// <summary>前端锁定状态变化时由宿主调用（前端通过 RPC 通知）。</summary>
+        internal void SetTrayLocked(bool locked)
+        {
+            if (_trayLocked == locked) return;
+            _trayLocked = locked;
+            ApplyTrayIcon();
+        }
+
+        /// <summary>托盘菜单里「锁状态显示在托盘图标上」的开关。</summary>
+        internal void ToggleTrayLockIcon()
+        {
+            var cur = Get(Settings(), "trayLockIcon", "1") == "1";
+            var next = cur ? "0" : "1";
+            try { db.SettingSet("trayLockIcon", next); }
+            catch (Exception ex) { Diag.Error("dispatch.v8", "写 trayLockIcon 失败", ex); }
+            ApplyTrayIcon();
+        }
+
+        /// <summary>按当前（设置 × 锁定状态）重画托盘图标。任何时候调都安全。</summary>
+        private void ApplyTrayIcon()
+        {
+            try
+            {
+                if (tray == null) return;
+                if (_trayBaseIcon == null)
+                    _trayBaseIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+
+                var showLock = Get(Settings(), "trayLockIcon", "1") == "1";
+                if (!showLock)
+                {
+                    // 关掉特性时把角标摘掉，别留一个上次画上去的锁
+                    tray.Icon = _trayBaseIcon;
+                    return;
+                }
+                tray.Icon = _trayLocked ? WithLockBadge(_trayBaseIcon, true) : _trayBaseIcon;
+            }
+            catch (Exception ex) { Diag.Warn("dispatch.v8", "重画托盘图标失败", ex); }
+        }
+
+        /// <summary>把原图标右下角叠一把小锁（locked=true）或开锁轮廓（false）。</summary>
+        private static Icon WithLockBadge(Icon baseIcon, bool locked)
+        {
+            const int size = 32;
+            using var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.Clear(Color.Transparent);
+                using (var b = baseIcon.ToBitmap()) g.DrawImage(b, 0, 0, size, size);
+
+                // 角标占右下 14×14，底色用一块半透明圆角让它从任何图标上都看得清
+                var r = new Rectangle(size - 15, size - 15, 13, 13);
+                using (var bg = new SolidBrush(Color.FromArgb(236, 255, 255, 255)))
+                    g.FillEllipse(bg, r);
+                using (var pen = new Pen(locked ? Color.FromArgb(190, 46, 38) : Color.FromArgb(120, 120, 120), 1.4f))
+                    g.DrawEllipse(pen, r);
+
+                // 锁体
+                var body = new Rectangle(r.X + 3, r.Y + 6, 7, 6);
+                using (var sb = new SolidBrush(locked ? Color.FromArgb(190, 46, 38) : Color.FromArgb(120, 120, 120)))
+                    g.FillRectangle(sb, body);
+                // 锁梁：锁着是闭合的半圆，开锁时缺口朝左上
+                using (var pen = new Pen(locked ? Color.FromArgb(190, 46, 38) : Color.FromArgb(120, 120, 120), 1.5f))
+                {
+                    if (locked)
+                        g.DrawArc(pen, r.X + 4, r.Y + 3, 6, 6, 180, 180);
+                    else
+                        g.DrawArc(pen, r.X + 6, r.Y + 2, 6, 7, 200, 160);
+                }
+            }
+            // GetHicon 出来的 HICON 必须自己 DestroyIcon，否则每切一次锁状态就漏一个 GDI 句柄
+            var h = bmp.GetHicon();
+            try
+            {
+                using var tmp = Icon.FromHandle(h);
+                return (Icon)tmp.Clone();
+            }
+            finally { DestroyIcon(h); }
         }
 
         /* ================= 第 191 条：开机自启 =================
@@ -362,6 +463,7 @@ namespace Riqian
                 var mode = Get(s, "trayIconMode", "full");
                 tray.Visible = mode != "off";
                 tray.Text = mode == "mini" ? "日签" : "日签 · 打卡日记本";
+                ApplyTrayIcon();
 
                 var menu = new ContextMenuStrip();
                 var ids = Get(s, "trayMenu", "open,today,diary,note,todo,pomo,sep,hide,boss,sep,quit")
@@ -448,6 +550,12 @@ namespace Riqian
             /* 浮窗的显示口子：前端也可以主动叫出来（比如按钮点一下） */
             if (m == "quick.popup") { QuickCapture(S(a, "kind", "todo")); return QuickState(); }
             if (m == "quick.state") return QuickState();
+            /* 第 75 条：前端锁屏 / 解锁时把状态同步给宿主，托盘图标据此叠小锁角标 */
+            if (m == "shell.lockState")
+            {
+                SetTrayLocked(I(a, "locked", 0) == 1);
+                return new { ok = true, locked = _trayLocked, icon = Get(Settings(), "trayLockIcon", "1") };
+            }
             if (m == "shell.apply") { ApplyShell(); return new { ok = true, boss = _bossOn }; }
             /* 第 191 条：开机自启。默认不启动，用户点了才写注册表。 */
             if (m == "shell.autostart") return AutostartSet(I(a, "on", 0));

@@ -35,6 +35,17 @@
 
   <ItemGroup>
     <EmbeddedResource Include="wwwroot\index.html" LogicalName="index.html" />
+    <!--
+      KaTeX 的 20 个字体（约 304 KB）作为独立资源嵌入，由 HtmlHost.WriteFonts 在启动时
+      落到 %TEMP%\Riqian\ui\fonts\。
+
+      为什么不继续 base64 塞在 CSS 里：base64 有 33% 膨胀（254 KB → 346 KB 文本），
+      而且字体字节几乎不可压缩，会把整个 index.html 的压缩率拖死
+      （实测 CSS 含字体 gzip 284 KB vs 不含 27 KB）。外置后整包小 327 KB。
+
+      LogicalName 前缀 Riqian.fonts. 是 HtmlHost.FontPrefix 依赖的命名约定，改要同步。
+    -->
+    <EmbeddedResource Include="wwwroot\fonts\*.woff2" LogicalName="Riqian.fonts.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--

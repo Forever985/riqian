@@ -8,6 +8,7 @@ import { HabitWidget, HabitSpark, habitIsDone } from '../modules/HabitWidget';
 import { HabitStatsPanel } from '../features/habitStats';
 import { COLORS, HABIT_TYPE_NAME } from '../lib/const';
 import { todayKey } from '../lib/date';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import type { Habit, HabitHistory, HabitType } from '../types';
 
 /* ---------------- 新建 / 编辑习惯 ---------------- */
@@ -449,12 +450,36 @@ export function HabitsView() {
     }
   };
 
+  /* ---------------- 右键菜单（第 235 条） ----------------
+   *
+   * 一张打卡卡片的右上角已经挤了「上移 / 下移 / 详情 / 改 / …」五个按钮，
+   * 再往里塞就只能缩字号了。这些操作里有一半是低频的（改名字、归档、删除），
+   * 正好是右键该干的活：平时不占地方，想起来时就在鼠标底下。
+   *
+   * 注意「上移 / 下移」在这里仍然保留 —— 它们确实低频，
+   * 但只要用户在「界面布局」里选了按钮模式，就说明他喜欢按钮，不该被他关掉。
+   */
+  const ctx = useContextMenu();
+
+  const menuFor = (h: Habit, idx: number): MenuItem[] => [
+    { label: '查看近 60 天', hint: '打卡曲线', onClick: () => setDetail(h) },
+    { label: '编辑名称 / 颜色', onClick: () => setEditor({ open: true, habit: h }) },
+    { sep: true },
+    { label: '上移一行', disabled: idx === 0, onClick: () => void moveBy(h.id, -1) },
+    { label: '下移一行', disabled: idx >= active.length - 1, onClick: () => void moveBy(h.id, 1) },
+    { sep: true },
+    { label: '归档', hint: '从打卡列表收起来，记录保留', onClick: () => void archiveHabit(h) },
+    { label: '删除（进回收站）', danger: true, onClick: () => void deleteHabit(h) },
+  ];
+
   const done = active.filter((h) => habitIsDone(h, logs[h.id])).length;
   const pct = active.length ? Math.round((done / active.length) * 100) : 0;
 
   return (
     <>
-      <Topbar title="打卡" sub={date === todayKey() ? '今天' : `回顾 ${date}`} />
+      <Topbar title="打卡" sub={date === todayKey() ? '今天' : `回顾 ${date}`}
+        lock={{ scope: 'habits', label: '打卡记录' }}
+      />
       <div className="wrap">
         <div className="card">
           <h3>今天 <span className="muted">{date}</span></h3>
@@ -490,6 +515,7 @@ export function HabitsView() {
                 onDragOver={habitDrag(idx).onDragOver}
                 onDragLeave={habitDrag(idx).onDragLeave}
                 onDrop={habitDrag(idx).onDrop}
+                onContextMenu={(e) => ctx.open(e, menuFor(h, idx))}
               >
                 <div className="top">
                   {canDrag ? (
@@ -563,7 +589,16 @@ export function HabitsView() {
           <div className="card">
             <h3>已归档 <span className="muted">{archived.length} 个</span></h3>
             {archived.map((h) => (
-              <div className="hrow" key={h.id} style={{ padding: '9px 0' }}>
+              <div
+                className="hrow"
+                key={h.id}
+                style={{ padding: '9px 0' }}
+                onContextMenu={(e) => ctx.open(e, [
+                  { label: '取消归档', hint: '回到打卡列表', onClick: () => void archiveHabit(h) },
+                  { sep: true },
+                  { label: '删除（进回收站）', danger: true, onClick: () => void deleteHabit(h) },
+                ])}
+              >
                 <span className="ico" style={{ width: 20, textAlign: 'center' }}>{h.icon || '·'}</span>
                 <span className="nm" style={{ opacity: 0.65 }}>{h.name}</span>
                 <span className="ty">{HABIT_TYPE_NAME[h.type] || h.type}</span>
@@ -593,6 +628,9 @@ export function HabitsView() {
       {trash ? (
         <HabitTrashDialog onClose={() => setTrash(false)} onChanged={() => void reloadHabits()} />
       ) : null}
+
+      {/* 第 235 条：右键菜单出口 */}
+      {ctx.node}
     </>
   );
 }

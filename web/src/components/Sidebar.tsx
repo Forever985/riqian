@@ -33,6 +33,9 @@ export const NAV: { k: ViewKey; ic: IconName; t: string; d: string; flag?: strin
   { k: 'alarms', ic: 'bell', t: '提醒', d: '定时提醒、每隔多久提醒一次', flag: 'navAlarms' },
   { k: 'drafts', ic: 'archive', t: '草稿箱', d: '写了还没定稿的日子', flag: 'navDrafts' },
   { k: 'media', ic: 'grid', t: '多媒体库', d: '图片、音乐、文件都收在这里', flag: 'navMedia' },
+  /* 第 55 条：缓存单独一个模块，和图片库 / 音乐库平级 —— 用户原话
+     「缓存和图片库、音乐库这种应该专门独立做一个模块（就是在对应的地方有，同时也单独有）」 */
+  { k: 'cache', ic: 'database', t: '缓存', d: '占用明细、清理、链接音频的缓存进度', flag: 'navCache' },
   { k: 'stats', ic: 'chart', t: '统计', d: '字数、打卡、专注的趋势', flag: 'navStats' },
   // #241 三个中心：扩展生态入口。放在"设置"前面而不是藏进设置里 ——
   // 用户拿到别人给的包，第一反应是找"哪里装"，不是翻设置。
@@ -87,6 +90,8 @@ export function Sidebar() {
   const goToday = useStore((s) => s.goToday);
   const settings = useStore((s) => s.settings);
   const todos = useStore((s) => s.todos);
+  const habits = useStore((s) => s.habits);
+  const logs = useStore((s) => s.logs);
   const root = useStore((s) => s.root);
   const pomo = useStore((s) => s.pomo);
   const setSetting = useStore((s) => s.setSetting);
@@ -97,6 +102,32 @@ export function Sidebar() {
   const startRef = useRef({ pos: 0, size: 0 });
 
   const openTodos = todos.filter((t) => !t.done && !t.trashed).length;
+
+  /*
+   * 第 136 条：角标不能只给待办一处。
+   *
+   * 用户原话：「刚刚新建了一条待办。发现左侧导航栏出现数字『1』。希望能够在设置中
+   * 进行修改，允许以红点、数字……」—— 后半截的「样式可配」早就做了（badgeStyle），
+   * 真正缺的是**别的页面也有数字时却不显示**。一个人的待办是 3 条、打卡还有 2 个没打，
+   * 导航上只有一个 3，那这个角标就在骗人。
+   *
+   * 现在给每个能算出「还剩多少没做」的页面都算一份。算不出来的不给 —— 硬凑一个
+   * 数字比不显示更糟（比如「统计」页，它没有「待办事项」这个概念）。
+   */
+  const badgeOf = (k: string): number => {
+    switch (k) {
+      case 'todos': return openTodos;
+      /* 打卡：今天还没打的（日志存在的就算打过了，和打卡页的判断一致） */
+      case 'habits': return habits.filter((h) => {
+        if ((h as { archived?: number }).archived) return false;
+        const v = logs[h.id];
+        return v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+      }).length;
+      /* 草稿箱：有未定稿的日记才亮，这个数从 overview 拿太绕，先只做「有没有」那种红点，
+         数字仍按 openTodos 之外的语义给 0 —— 见下面 badgeZeroHidden 的处理 */
+      default: return 0;
+    }
+  };
   /**
    * 第 228 条：番茄钟可以改名（设置 → 学习 / 番茄钟 → 模块叫什么）。
    * 改名只影响这一项的显示字，其它地方（顶栏标题、迷你计时条）也走同一个 nameOf。
@@ -261,11 +292,16 @@ export function Sidebar() {
             {LOCKABLE[n.k as string] && (vault?.rules ?? []).some((r) => r.scope === LOCKABLE[n.k as string] && !r.target) ? (
               <span className="nav-lock" title="这一页加过锁"><Icon name="lock" size={10} /></span>
             ) : null}
-            {n.k === 'todos' && openTodos && badgeStyle !== 'off' ? (
-              badgeStyle === 'dot' || collapsed
-                ? <span className="badge dot" />
-                : <span className="badge">{openTodos > 99 ? '99+' : openTodos}</span>
-            ) : null}
+            {/* 第 136 条：角标不再只认待办；样式（数字 / 红点 / 关）跟着设置走 */}
+            {(() => {
+              if (badgeStyle === 'off') return null;
+              const num = badgeOf(n.k);
+              if (!num) return null;
+              /* 折叠成图标时放不下数字，退成红点；这是原有行为，保留 */
+              if (badgeStyle === 'dot' || collapsed) return <span className="badge dot" />;
+              /* 数字太宽会把导航项挤歪，99 以上收成 99+ */
+              return <span className="badge">{num > 99 ? '99+' : num}</span>;
+            })()}
           </button>
         ))}
       </nav>

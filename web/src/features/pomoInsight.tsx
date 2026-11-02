@@ -26,15 +26,43 @@ const hm = (min: number) => {
  * 完全重复 —— 用户原话「一方面功能重复，另一方面不知所云」。
  * 现在改成**受控**：区间由外面那一个决定，这里不再单独给按钮。
  * 传了 days 就用外面的；没传（独立使用）才退回自己那排。
+ *
+ * 第 131 条：统计页也要用这块。
+ * 用户原话：「我不太清楚是否应该在"统计"中整合番茄钟等等模块的数据，
+ * 还是说应该重复都有（当然数据来源是同一份，只是组件模块复用）。」
+ *
+ * 结论是「重复都有，但只维护一份组件」。理由：
+ *   · 番茄钟页需要的是「专注本身」的完整视角（计时器、手动补录、任务排行），
+ *     统计页需要的是「写作 / 打卡 / 专注」横向对比时的一格。
+ *     同一份数据，看的角度不同，两处都该有 —— 但**画法必须是同一个组件**。
+ *   · 所以这里加了 from/to 受控模式。统计页传自己的区间（今年 / 去年 / 自定义
+ *     这些 days 表达不了），番茄钟页传 days，两边调的是同一个后端聚合。
+ *   · 反过来做（只在统计页保留、番茄页删掉）会让用户每天计时的那一页
+ *     反而看不到自己的投入趋势，那是倒退。
  */
-export function PomoInsightPanel({ days: daysProp, hideRange }: { days?: number; hideRange?: boolean } = {}) {
+export function PomoInsightPanel({
+  days: daysProp, hideRange, from, to, compact,
+}: {
+  days?: number;
+  hideRange?: boolean;
+  /** 第 131 条：按绝对日期取区间，优先于 days —— 统计页的「今年 / 去年 / 自定义」靠它 */
+  from?: string;
+  to?: string;
+  /** 统计页里只占半行，热力图会撑破卡片，所以给它一个收窄的版本 */
+  compact?: boolean;
+} = {}) {
   const [ownDays, setOwnDays] = useState(30);
   const days = daysProp ?? ownDays;
   const [d, setD] = useState<PomoInsight | null>(null);
   /** 第 186 条：点某一天 → 看那天专注了哪些事 */
   const [pickDate, setPickDate] = useState<string | null>(null);
 
-  useEffect(() => { void api.pomoInsight(days).then(setD).catch(() => setD(null)); }, [days]);
+  useEffect(() => {
+    /* from 存在时走绝对区间；否则还是按天数往后推。
+       两条路最终落到同一个后端函数，不会算出两套数字。 */
+    const p = from ? api.pomoInsight(days, from, to) : api.pomoInsight(days);
+    void p.then(setD).catch(() => setD(null));
+  }, [days, from, to]);
 
   const max = Math.max(1, ...(d?.series.map((x) => x.minutes) || [1]));
   const maxTask = Math.max(1, ...(d?.topTasks.map((x) => x.minutes) || [1]));
@@ -81,29 +109,34 @@ export function PomoInsightPanel({ days: daysProp, hideRange }: { days?: number;
 
       <PomoDayDialog date={pickDate} onClose={() => setPickDate(null)} />
 
-      <div className="pi-cols">
-        <div>
-          <div className="pi-t">一天里什么时候最专注</div>
-          <div className="hours">
-            {(d?.byHour || []).map((m, i) => (
-              <div className="hb" key={i} title={`${i}:00 · ${h(m)}`}>
-                <i style={{ height: `${Math.max(2, (m / maxHour) * 100)}%` }} />
-                {i % 6 === 0 ? <em>{i}</em> : null}
+      {/* 第 131 条：compact 模式下不画「时段分布 + 任务排行」两块 ——
+          统计页那张卡只占三分之一行宽，塞进去会挤成两行字。
+          统计页要的是"专注有多少"这个数，细节回番茄页看。 */}
+      {compact ? null : (
+        <div className="pi-cols">
+          <div>
+            <div className="pi-t">一天里什么时候最专注</div>
+            <div className="hours">
+              {(d?.byHour || []).map((m, i) => (
+                <div className="hb" key={i} title={`${i}:00 · ${h(m)}`}>
+                  <i style={{ height: `${Math.max(2, (m / maxHour) * 100)}%` }} />
+                  {i % 6 === 0 ? <em>{i}</em> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="pi-t">任务排行</div>
+            {d?.topTasks?.length ? d.topTasks.map((t) => (
+              <div className="pi-task" key={t.name}>
+                <span className="nm" title={t.name}>{t.name}</span>
+                <span className="bar"><i style={{ width: `${(t.minutes / maxTask) * 100}%` }} /></span>
+                <span className="mm">{h(t.minutes)}</span>
               </div>
-            ))}
+            )) : <div className="empty small">还没给番茄写过任务名。开始前填一句就会出现在这里。</div>}
           </div>
         </div>
-        <div>
-          <div className="pi-t">任务排行</div>
-          {d?.topTasks?.length ? d.topTasks.map((t) => (
-            <div className="pi-task" key={t.name}>
-              <span className="nm" title={t.name}>{t.name}</span>
-              <span className="bar"><i style={{ width: `${(t.minutes / maxTask) * 100}%` }} /></span>
-              <span className="mm">{h(t.minutes)}</span>
-            </div>
-          )) : <div className="empty small">还没给番茄写过任务名。开始前填一句就会出现在这里。</div>}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

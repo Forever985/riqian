@@ -769,7 +769,7 @@ function LayoutSection() {
           />
         </div>
       </Row>
-      <Row label="导航角标" sub="待办数量怎么显示：数字 / 小红点 / 不显示" kw="角标 徽标 红点 数字 badge 待办">
+      <Row label="导航角标" sub="待办、打卡还剩多少怎么显示：数字 / 小红点 / 不显示" kw="角标 徽标 红点 数字 badge 待办 打卡">
         <Chips
           value={String(settings.badgeStyle ?? 'num')}
           items={[['num', '数字'], ['dot', '小红点'], ['off', '不显示']]}
@@ -829,7 +829,7 @@ function LayoutSection() {
         />
       </Row>
 
-      <Row label="语言" sub="简体中文标注为「正体中文」，不提供繁体" kw="语言 多语言 英文 中文 language">
+      <Row label="语言" sub="中文是默认；英文已覆盖界面骨架，正文仍为中文" kw="语言 多语言 英文 中文 language">
         <Chips
           value={String(settings.language || 'zh-Hans')}
           items={LANGS.map((l) => [l.k, l.n] as [string, string])}
@@ -840,9 +840,9 @@ function LayoutSection() {
         <button className="btn sm" onClick={() => void useStore.getState().go('profile')}>去填写 →</button>
       </Row>
       <div className="small muted" style={{ marginTop: 6, lineHeight: 1.9 }}>
-        英文目前只覆盖界面框架（导航 / 设置分组 / 常用按钮），正文和长句仍是中文 ——
-        半截翻译比不翻译更难看，所以先立骨架再铺量。后续计划：
-        {PLANNED_LANGS.join(' · ')}。
+        英文覆盖的是界面骨架：29 个页面标题、导航项、设置分组、常用按钮。
+        正文、长提示和说明文字仍是中文 —— 半截翻译比不翻译更难看，所以先立骨架再铺量。
+        后续计划：{PLANNED_LANGS.join(' · ')}。
       </div>
     </div>
 
@@ -1113,6 +1113,60 @@ function HabitsSection() {
           />
         </div>
       </Row>
+      {String(settings.habitRemindOn ?? '0') === '1' ? (
+        <>
+          {/* 第 98 条：到点才说已经晚了，要能提前 */}
+          <Row
+            label="提前多少分钟提醒"
+            sub="0 = 到点才提醒。提前 30 分钟，睡前还有时间补上"
+            kw="提前 提前量 早点 预警 打卡 提醒"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                className="inp"
+                type="number"
+                min="0"
+                max="240"
+                step="5"
+                style={{ width: 80 }}
+                value={String(settings.habitRemindLead ?? '0')}
+                onChange={(e) => void setSetting('habitRemindLead', String(Math.max(0, Math.min(240, Number(e.target.value) || 0))))}
+              />
+              <span className="small muted">分钟</span>
+            </div>
+          </Row>
+          <Row
+            label="多久重复提醒一次"
+            sub="0 = 一天只说一次。设了间隔就每轮催一遍，最多 5 次"
+            kw="重复 间隔 多次 反复 催 打卡 提醒"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                className="inp"
+                type="number"
+                min="0"
+                max="240"
+                step="5"
+                style={{ width: 80 }}
+                value={String(settings.habitRemindEvery ?? '0')}
+                onChange={(e) => void setSetting('habitRemindEvery', String(Math.max(0, Math.min(240, Number(e.target.value) || 0))))}
+              />
+              <span className="small muted">分钟</span>
+            </div>
+          </Row>
+          <Row
+            label="提醒方式"
+            sub="深夜开声音会吵到人；只标角标不会出声"
+            kw="提醒 方式 声音 静音 铃 响 角标"
+          >
+            <Chips
+              value={String(settings.habitRemindHow || 'sound')}
+              items={[['sound', '响一声'], ['badge', '只标角标'], ['silent', '完全静音']]}
+              onPick={(v) => void setSetting('habitRemindHow', v)}
+            />
+          </Row>
+        </>
+      ) : null}
       <div className="small muted" style={{ marginTop: -4, marginBottom: 8 }}>
         提醒只在软件开着（或缩在托盘）时响。点一下看看现在还剩哪些：
         <button
@@ -1122,7 +1176,18 @@ function HabitsSection() {
             void (async () => {
               try {
                 const r = await api.habitRemind.preview();
-                toast(r.count ? `还有 ${r.count} 项没打卡：${r.names.join('、')}` : '今天的卡都打完了，提醒不会响');
+                /* 第 98 条：把「今天几点会响、响几次」直接算给用户看。
+                   光给三个输入框，他得自己在脑子里做 21:00−30 这种减法。 */
+                const when = r.on
+                  ? `会在 ${(r.fireAt || []).join(' / ')} 提醒`
+                  : '提醒未开启';
+                const rest = r.count
+                  ? `还有 ${r.count} 项没打卡：${r.names.join('、')}`
+                  : '今天的卡都打完了，提醒不会响';
+                const quota = r.on && r.todayTimes >= r.maxTimes
+                  ? `（今天的 ${r.maxTimes} 次已经用完）`
+                  : '';
+                toast(`${rest}${r.on ? ` · ${when}${quota}` : ''}`);
               } catch { toast('查不到，稍后再试'); }
             })();
           }}

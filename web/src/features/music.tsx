@@ -23,14 +23,49 @@ export function MusicLib({ compact }: { compact?: boolean }) {
   const [urlOpen, setUrlOpen] = useState(false);
   const [url, setUrl] = useState('');
   const [urlName, setUrlName] = useState('');
+  /* 第 26 条：正在下载的那条 / 全量缓存进度 */
+  const [caching, setCaching] = useState<string | null>(null);
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const load = async () => setList(await api.music.list());
   useEffect(() => { void load(); }, []);
 
+  /* 第 26 条：缓存一条网络音频到本地，之后断网也能播 */
+  const cacheOne = async (m: MusicItem) => {
+    if (caching) return;
+    setCaching(m.id);
+    try {
+      const r = await api.music.cacheUrl(m.id);
+      if (r.ok) {
+        toast(r.already ? '这条已经缓存过了' : `已缓存到本地（${mb(r.bytes || 0)}）`);
+        await load();
+      } else {
+        toast(r.err || '缓存失败');
+      }
+    } finally { setCaching(null); }
+  };
+
+  /* 第 26 条：一次把所有网络音频都缓存下来 */
+  const cacheAll = async () => {
+    if (bulk) return;
+    const pending = list.filter((m) => m.url && !m.cached);
+    if (!pending.length) { toast('没有需要缓存的链接音频'); return; }
+    setBulk({ done: 0, total: pending.length });
+    try {
+      const r = await api.music.cacheAll();
+      toast(`缓存完成：成功 ${r.done} 个，失败 ${r.failed} 个${r.err ? `（${r.err}）` : ''}`);
+      await load();
+    } finally { setBulk(null); }
+  };
+
   const play = async (m: MusicItem) => {
     if (playing === m.id) { audioRef.current?.pause(); setPlaying(null); return; }
-    const src = m.url || imgUrl(m.id);
+    /*
+     * 第 26 条：缓存过的优先放本地文件 —— 断网也能听，而且不用再走一遍网络。
+     * 没缓存过才回落到链接地址。
+     */
+    const src = m.cached ? imgUrl(m.id) : (m.url || imgUrl(m.id));
     if (!audioRef.current) audioRef.current = new Audio();
     const a = audioRef.current;
     a.src = src;
@@ -69,7 +104,17 @@ export function MusicLib({ compact }: { compact?: boolean }) {
           <Icon name="plus" size={13} />导入本地音频 / 视频
         </button>
         <button className="btn sm" onClick={() => setUrlOpen(true)}><Icon name="link" size={13} />添加链接</button>
-        <span className="small muted">视频只播放声音；链接可选缓存到本地</span>
+        {/* 第 26 条：链接音频真的能缓存到本地，断网也能放 */}
+        <button
+          className="btn sm"
+          disabled={!!bulk || !list.some((m) => m.url && !m.cached)}
+          title="把清单里所有网络链接下载到本地，之后断网也能播放"
+          onClick={() => void cacheAll()}
+        >
+          <Icon name="download" size={13} />
+          {bulk ? `缓存中…` : '全部缓存到本地'}
+        </button>
+        <span className="small muted">视频只播放声音；链接可以缓存到本地</span>
         <span className="sp" />
         <button className="btn sm ghost" onClick={() => void load()} title="刷新"><Icon name="refresh" size={13} /></button>
       </div>
@@ -83,9 +128,20 @@ export function MusicLib({ compact }: { compact?: boolean }) {
               </button>
               <span className="mn">{m.name || m.id}</span>
               <span className="chip">{m.kind === 'video' ? '视频·仅音频' : m.kind}</span>
-              {m.url ? <span className="chip">链接</span> : null}
+              {m.url ? <span className="chip">{m.cached ? '已缓存' : '链接'}</span> : null}
               <span className="sp" />
               <span className="small muted">{m.bytes ? mb(m.bytes) : '—'}</span>
+              {/* 第 26 条：每一条链接音频都能单独缓存 */}
+              {m.url && !m.cached ? (
+                <button
+                  className="btn sm ghost"
+                  disabled={caching === m.id}
+                  title="下载到本地，之后断网也能播放"
+                  onClick={() => void cacheOne(m)}
+                >
+                  {caching === m.id ? '下载中…' : '缓存到本地'}
+                </button>
+              ) : null}
               <button className="btn sm ghost" onClick={() => void useAsSound(m)}>设为提示音</button>
             </div>
           ))}

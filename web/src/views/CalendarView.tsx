@@ -376,6 +376,7 @@ export function CalendarView() {
             回到今天
           </button>
         }
+        lock={{ scope: 'calendar', label: '日历' }}
       />
       <div className="wrap wide">
         <div className="cal2">

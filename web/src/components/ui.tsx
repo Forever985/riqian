@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import { useStore } from '../store';
+import { api } from '../api';
+import { useT } from '../lib/i18n';
+import { Icon } from './Icons';
 
 /* ---------------- 可撤回的提示（第 237 条） ---------------- */
 
@@ -38,17 +41,88 @@ export function setPendingToastAction(a: ToastAction | null) {
 
 /* ---------------- 顶部栏：用 portal 挂到 .main 里的固定槽位 ---------------- */
 
-export function Topbar({ title, sub, right }: { title: string; sub?: string; right?: ReactNode }) {
+export function Topbar({ title, sub, right, lock }: {
+  title: string;
+  sub?: string;
+  right?: ReactNode;
+  /**
+   * 第 31 / 75 条：这一页能整体加锁的话，把 scope 传进来，
+   * 顶栏右侧会自动挂一把小锁 —— 点了就加锁 / 解锁，不用再跑到设置页。
+   *
+   * 为什么把入口放顶栏而不是各页自己塞按钮：
+   * 用户原话是「针对待办、倒计时设置密码」，但当时界面上一个入口都没有，
+   * 只能去「设置 → 安全与密码」猜。每页都自己写一遍按钮必然会漏，
+   * 也不会有统一的「这一页现在锁着没有」的状态显示。这里一处解决。
+   */
+  lock?: { scope: string; label?: string };
+}) {
   const slot = typeof document !== 'undefined' ? document.getElementById('topbar-slot') : null;
+  /*
+   * 第 56 条：标题在这里统一过一遍翻译。
+   *
+   * 29 个页面都在调用 Topbar，如果每个页面自己写 t('统计')，
+   * 一是要改 29 个文件，二是必然漏几个 —— 漏掉的那页在英文界面下就是中文标题。
+   * 在 Topbar 内部翻一次，所有页面（包括以后新加的）自动生效。
+   * sub 也顺手过一遍：它通常是「回顾 2026-11-02」这类短句，
+   * 整句没译文就原样返回，不会变成半截英文。
+   */
+  const t = useT();
   const node = (
     <>
-      <h2>{title}</h2>
-      {sub ? <span className="sub">{sub}</span> : null}
+      <h2>{t(title)}</h2>
+      {sub ? <span className="sub">{t(sub)}</span> : null}
       <span className="sp" />
       {right}
+      {lock ? <LockChip scope={lock.scope} label={lock.label || title} /> : null}
     </>
   );
   return slot ? createPortal(node, slot) : null;
+}
+
+/**
+ * 顶栏上那把锁。
+ *
+ * 三种状态要说清楚，否则用户不知道自己在看什么：
+ *   没锁     → 空心锁图标，点了加锁
+ *   锁着     → 实心 / 高亮锁，点了去掉锁（不是「解锁一次」，是彻底不要这把锁）
+ *   闪一下   → 刚解锁的几分钟内，显示「临时解锁中」，点一下立刻重新锁上
+ */
+function LockChip({ scope, label }: { scope: string; label: string }) {
+  const vault = useStore((s) => s.vault);
+  const reloadVault = useStore((s) => s.reloadVault);
+  const toast = useStore((s) => s.toast);
+  const rule = (vault?.rules ?? []).find((r) => r.scope === scope && !r.target);
+
+  const onClick = async () => {
+    try {
+      if (rule) {
+        await api.vault.remove(rule.id);
+        await reloadVault();
+        toast(`「${label}」的锁已去掉`);
+      } else {
+        // 动态 import：Lock.tsx 反过来依赖本文件的 Dialog / askText，
+        // 静态 import 会成环，WebView2 里表现为运行时 undefined
+        const { askProtect } = await import('./Lock');
+        const ok = await askProtect(scope, '', label);
+        toast(ok ? `已给「${label}」加锁` : '没加锁');
+      }
+    } catch (e) {
+      toast('操作失败：' + (e as Error).message);
+    }
+  };
+
+  return (
+    <button
+      className={`btn sm ghost topbar-lock ${rule ? 'on' : ''}`}
+      data-act="topbar-lock"
+      data-locked={rule ? '1' : '0'}
+      title={rule ? '这一页加过锁 · 点一下去掉' : '给这一页加锁：之后进来要先输密码'}
+      onClick={() => void onClick()}
+    >
+      <Icon name={rule ? 'lock' : 'unlock'} size={13} />
+      <span className="lb">{rule ? '已加锁' : '加锁'}</span>
+    </button>
+  );
 }
 
 /* ---------------- 弹层 ---------------- */

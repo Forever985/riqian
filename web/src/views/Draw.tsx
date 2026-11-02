@@ -25,6 +25,7 @@ export function DrawView() {
             <Icon name="plus" size={13} />新建
           </button>
         }
+        lock={{ scope: 'draw', label: '画板' }}
       />
       <div className="wrap">
         <div className="card">

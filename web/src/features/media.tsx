@@ -834,9 +834,10 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
   const [sort, setSort] = useState<MediaSort>('new');
   /* 第 189 条：方向单独一个开关，别再为"最早/最晚"各来一个按钮 */
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
-  /* 第 151 条：文件夹筛选 + 清单 */
+  /* 第 151 条：文件夹筛选 + 清单
+     第 220 条：清单改成层级（folder 是全路径，name 是最后一段，depth 用来缩进） */
   const [folder, setFolder] = useState('');
-  const [folders, setFolders] = useState<{ folder: string; n: number }[]>([]);
+  const [folders, setFolders] = useState<{ folder: string; name?: string; own?: number; n: number; depth?: number }[]>([]);
   /* 第 151 条：标签筛选 + 标签清单 */
   const [tag, setTag] = useState('');
   const [tags, setTags] = useState<{ tag: string; n: number }[]>([]);
@@ -1074,9 +1075,19 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
     {
       label: '移到文件夹…',
       onClick: async () => {
-        const name = await askText('移到文件夹', m.folder || '', '留空 = 移出文件夹（变成未分类）');
+        /*
+         * 第 220 条：这里支持两种写法 ——
+         *   「旅行」        → 移到顶层那个文件夹
+         *   「旅行/2024」   → 移到子文件夹（不存在就顺手建出来）
+         * 用 / 分隔层级，比让用户去点一串按钮快。
+         */
+        const name = await askText(
+          '移到文件夹',
+          m.folder || '',
+          '留空 = 移出文件夹（未分类）；用 / 分层次，比如 旅行/2024/京都',
+        );
         if (name === null) return;
-        await api.mediaBulk([m.id], 'folder', name.trim());
+        await api.mediaBulk([m.id], 'folder', name.trim().replace(/^\/+|\/+$/g, ''));
         toast(`已移到「${name.trim() || '未分类'}」`);
         await afterChange();
       },
@@ -1337,19 +1348,31 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
             key={f.folder}
             className={`chip ${folder === f.folder ? 'on' : ''}`}
             data-folder={f.folder}
+            data-depth={f.depth ?? 0}
+            /* 第 220 条：层级缩进。用 padding 而不是前置空格 —— 空格在按钮里会被压掉 */
+            style={(f.depth ?? 0) > 0 ? { paddingLeft: 10 + (f.depth || 0) * 12 } : undefined}
             onClick={() => setFolder(f.folder)}
             /* 第 151 条：右键改文件夹名（一次改一批，不用一个个挪） */
             onContextMenu={async (e) => {
               e.preventDefault();
-              const name = await askText('重命名文件夹', f.folder, '文件夹里的文件会一起跟过去');
-              if (name === null || !name.trim() || name.trim() === f.folder) return;
-              await api.mediaRenameFolder(f.folder, name.trim());
-              toast(`已改名成「${name.trim()}」`);
-              if (folder === f.folder) setFolder(name.trim());
+              /*
+               * 第 220 条：有了层级之后，改名/新建都在这一层里做，别让用户手打斜杠。
+               * 改名只改最后一段，前缀自动继承 —— 手打「旅行/2024」很容易打错层级。
+               */
+              const last = f.folder.split('/').pop() || f.folder;
+              const name = await askText('重命名文件夹', last, '只改这一层的名字，子文件夹会一起跟过去');
+              if (name === null || !name.trim() || name.trim() === last) return;
+              const parent = f.folder.includes('/') ? f.folder.slice(0, f.folder.lastIndexOf('/') + 1) : '';
+              const next = parent + name.trim();
+              await api.mediaRenameFolder(f.folder, next);
+              toast(`已改名成「${next}」`);
+              if (folder === f.folder || folder.startsWith(f.folder + '/')) {
+                setFolder(folder === f.folder ? next : next + folder.slice(f.folder.length));
+              }
               await afterChange();
             }}
-            title="右键可以改名"
-          >{f.folder} <span className="muted">{f.n}</span></button>
+            title={`${f.folder}${f.own != null && f.n !== f.own ? ` · 本层 ${f.own} 个，含子文件夹共 ${f.n} 个` : ''}\n右键改名，Shift+右键新建这个文件夹的子文件夹`}
+          >{f.name || f.folder} <span className="muted">{f.n}</span></button>
         ))}
         {pendingFolder && !folders.some((f) => f.folder === pendingFolder) ? (
           <button
@@ -1376,17 +1399,27 @@ export function MediaManager({ onClose, inline }: { onClose: () => void; inline?
         <button
           className="btn sm"
           data-act="new-folder"
-          title="新建一个空文件夹（分类）"
+          title="新建一个文件夹；当前选中了某个文件夹时，就建在它里面（第 220 条：可以无限嵌套）"
           onClick={async () => {
-            const name = await askText('新建文件夹', '', '给这一批文件起个分类名，比如「旅行」「素材」「头像」');
+            /*
+             * 第 220 条：嵌套。当前停在某个文件夹里时，新建默认建在它下面，
+             * 这样点两下就能建出「旅行 → 2024 → 京都」这种结构，不用手打斜杠。
+             */
+            const parent = folder && folder !== '__none__' && !folder.includes('__none__') ? folder : '';
+            const name = await askText(
+              parent ? `在「${parent}」下新建子文件夹` : '新建文件夹',
+              '',
+              parent ? '建在选中的文件夹里面；留空取消' : '给这一批文件起个分类名，比如「旅行」「素材」「头像」',
+            );
             if (name === null || !name.trim()) return;
-            // 空文件夹没有文件指向它，数据库里存不住 —— 直接用一条占位提示说明这件事
-            const exists = folders.some((f) => f.folder === name.trim());
-            if (exists) { setFolder(name.trim()); toast(`「${name.trim()}」已经在了，直接切过去`); return; }
-            setPendingFolder(name.trim());
-            toast(`「${name.trim()}」还没有文件。把文件移进来它就出现了`);
+            // 名字里带斜杠就等于直接建多层，顺手支持一下
+            const full = (parent ? parent + '/' : '') + name.trim().replace(/^\/+|\/+$/g, '');
+            const exists = folders.some((f) => f.folder === full);
+            if (exists) { setFolder(full); toast(`「${full}」已经在了，直接切过去`); return; }
+            setPendingFolder(full);
+            toast(`「${full}」还没有文件。把文件移进来它就出现了`);
           }}
-        ><Icon name="folder" size={12} /> 新建文件夹</button>
+        ><Icon name="folder" size={12} /> {folder && folder !== '__none__' ? '新建子文件夹' : '新建文件夹'}</button>
         {folder || tag ? (
           <button
             className="btn sm ghost"

@@ -155,6 +155,8 @@ export interface Countdown {
   nextDate: DateKey;
   /** 用户拖出来的顺序（0/10/20…）；全 0 表示没排过，按日期走 */
   sort: number;
+  /** 第 101 条：星标 = 「这个日子对我重要」，四象限里的「重要」维度 */
+  star?: number;
 }
 
 /** 回收站里的倒数日（第 145 条） */
@@ -292,6 +294,11 @@ export interface Overview {
   countdowns: number;
   templates: number;
   entries: number;
+  /** 第 12 条：本次统计用的自定义区间（没切区间时都是 null） */
+  rangeFrom?: string | null;
+  rangeTo?: string | null;
+  /** 区间内有记录的那几天跨度；没切区间时是全历史的跨度 */
+  rangeDays?: number;
 }
 
 export interface CalendarDay {
@@ -366,7 +373,9 @@ export type ViewKey =
   | 'notes' | 'profile' | 'welcome' | 'review'
   | 'changelog' | 'manual' | 'contact' | 'media' | 'music' | 'drafts'
   | 'ledger' | 'alarms' | 'timeline' | 'draw'
-  | 'themeCenter' | 'pluginCenter' | 'workshop';
+  | 'themeCenter' | 'pluginCenter' | 'workshop'
+  /* 第 55 条：缓存单独一个入口 */
+  | 'cache';
 
 /** 草稿箱里的一条 */
 export interface DraftItem {
@@ -524,6 +533,8 @@ export interface LedgerItem {
   cat: string;
   note: string;
   accountId?: string;
+  /** 非空表示这是储蓄罐的存入/取出，不是收支 —— 只是钱换了个地方待着 */
+  jarId?: string;
 }
 
 export interface LedgerData {
@@ -536,6 +547,12 @@ export interface LedgerData {
   byCat: { cat: string; outSum: number; inSum: number }[];
   /** 按天小计，SQL 里 GROUP BY 出来的，前端直接当抬头用（§2.6） */
   days: { date: string; inSum: number; outSum: number; inN: number; outN: number; n: number }[];
+  /**
+   * 渲染骨架：**明细口径**，不排罐子流水。
+   * days 是合计口径（排了罐子），"那天只有存钱/取钱"的日子不在里面 ——
+   * 所以不能拿 days 当骨架，否则那些日子的明细永远显示不出来。
+   */
+  dayItems?: { date: string; n: number }[];
   /** 收入 / 支出笔数，同样由 SQL 数 */
   inN: number;
   outN: number;
@@ -699,6 +716,10 @@ export interface NoteRow {
   chars: number;
   /** 第 230 条：手动顺序。只有「手动」排序模式看它 */
   sort?: number;
+  /** 第 128 条：这篇笔记自己的色点。空串 = 跟随笔记本 */
+  color?: string;
+  /** 第 128 条：图标名（取自 Icons 那套语义名）。空串 = 不显示 */
+  icon?: string;
 }
 
 /** 第 178 条：画板列表里的元数据（不带笔画） */
@@ -732,6 +753,9 @@ export interface NoteDetail {
   pinned: number;
   createdAt: string;
   updatedAt: string;
+  /** 第 128 条 */
+  color?: string;
+  icon?: string;
 }
 
 export interface UserProfile {
@@ -803,4 +827,72 @@ export interface TabItem {
   title: string;
   date?: string;
   noteId?: string;
+}
+
+/* ---------------- 储蓄罐（第 97 条） ---------------- */
+
+/** 存钱模式：free 自由 / fixed 定额 / step 递增 */
+export type JarMode = 'free' | 'fixed' | 'step';
+
+export interface Jar {
+  id: string;
+  name: string;
+  /** 目标金额。0 = 没设目标，是纯攒钱罐 */
+  target: number;
+  mode: JarMode | string;
+  /** week / month / day，自由模式为空串 */
+  period: string;
+  baseAmount: number;
+  stepAmount: number;
+  color: string;
+  icon: string;
+  note: string;
+  sort: number;
+  archived: number;
+  /** 实际余额 = 存入合计 − 取出合计，后端已算好 */
+  balance: number;
+  /** 存过几笔 */
+  deposits: number;
+  /** 完成百分比，0–100；没设目标时为 null（不是 0，别写成 0） */
+  pct: number | null;
+  done: boolean;
+  createdAt: string;
+}
+
+export interface JarItem {
+  id: string;
+  date: string;
+  amount: number;
+  dir: 'in' | 'out';
+  note: string;
+}
+
+export interface JarDetail {
+  ok: boolean;
+  jar?: {
+    id: string;
+    name: string;
+    target: number;
+    mode: JarMode | string;
+    period: string;
+    baseAmount: number;
+    stepAmount: number;
+    color: string;
+    note: string;
+  };
+  balance?: number;
+  items?: JarItem[];
+  /** 递增模式的下一期「该存多少」；其它模式等于起存额 */
+  nextAmount?: number;
+}
+
+export interface JarPreset {
+  k: string;
+  name: string;
+  mode: JarMode | string;
+  period: string;
+  baseAmount: number;
+  stepAmount: number;
+  target: number;
+  desc: string;
 }

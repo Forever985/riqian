@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import { Topbar } from '../components/ui';
 import { RankBoard } from '../features/rankBoard';
+import { PomoInsightPanel } from '../features/pomoInsight';
 import { Icon } from '../components/Icons';
 import { BarChart, Donut } from '../components/Charts';
 import { MOODS } from '../lib/const';
@@ -13,6 +14,41 @@ import type { Overview } from '../types';
 
 const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const WD_NAME = ['日', '一', '二', '三', '四', '五', '六'];
+
+/**
+ * 第 12 条：常用区间一键切换。
+ * 「近 30 天 / 近 90 天 / 今年 / 去年 / 全部」这些是大多数人真正会用的切片，
+ * 做成胶囊按钮，比每次手点两个日历快得多；「自定义」再给人一对日期输入框。
+ */
+type RangeKey = 'all' | 'd7' | 'd30' | 'd90' | 'y' | 'ly' | 'custom';
+
+const RANGE_ITEMS: { v: RangeKey; n: string; tip: string }[] = [
+  { v: 'all', n: '全部', tip: '从第一篇到今天的全部数据' },
+  { v: 'd7', n: '近 7 天', tip: '最近一周' },
+  { v: 'd30', n: '近 30 天', tip: '最近一个月' },
+  { v: 'd90', n: '近 90 天', tip: '最近一个季度' },
+  { v: 'y', n: '今年', tip: '1 月 1 日到今天' },
+  { v: 'ly', n: '去年', tip: '去年整年' },
+  { v: 'custom', n: '自定义', tip: '自己选起止日期' },
+];
+
+/** 算出某个预设区间对应的 from / to（全部 = 两个都不给） */
+function rangeOf(k: RangeKey, custom: { from: string; to: string }) {
+  const t = todayKey();
+  if (k === 'd7') return { from: shiftDay(t, -6), to: t };
+  if (k === 'd30') return { from: shiftDay(t, -29), to: t };
+  if (k === 'd90') return { from: shiftDay(t, -89), to: t };
+  if (k === 'y') return { from: `${t.slice(0, 4)}-01-01`, to: t };
+  if (k === 'ly') {
+    const y = Number(t.slice(0, 4)) - 1;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  if (k === 'custom') {
+    // 只填一头也让它生效：区间统计本来就是「从这天起」或「到这天止」
+    return { from: custom.from || undefined, to: custom.to || undefined };
+  }
+  return { from: undefined, to: undefined };
+}
 
 /**
  * 第 214 条：统计页所有卡片都能拖动排序。
@@ -104,10 +140,20 @@ export function StatsView() {
     },
   });
 
-  useEffect(() => { void api.stats.overview().then(setS); }, []);
+  /* 第 12 条：自定义时间区间 */
+  const [rangeKey, setRangeKey] = useState<RangeKey>('all');
+  const [custom, setCustom] = useState<{ from: string; to: string }>({ from: '', to: '' });
+
+  const load = useCallback(async (k: RangeKey, c: { from: string; to: string }) => {
+    const r = rangeOf(k, c);
+    try { setS(await api.stats.overview(r)); }
+    catch { toast('统计没读出来，稍后再试'); }
+  }, [toast]);
+
+  useEffect(() => { void load(rangeKey, custom); }, [rangeKey, custom, load]);
 
   if (!s) {
-    return (<><Topbar title="统计" /><div className="wrap"><div className="empty">统计中…</div></div></>);
+    return (<><Topbar title="统计" lock={{ scope: 'stats', label: '统计' }} /><div className="wrap"><div className="empty">统计中…</div></div></>);
   }
 
   const per = s.perDay || [];
@@ -139,6 +185,13 @@ export function StatsView() {
   const todoTotal = (s.todos?.open ?? 0) + (s.todos?.done ?? 0);
 
   /* ---------------- 每张卡的内容 ---------------- */
+
+  /* 统计页当前的绝对区间。番茄洞察要跟这一页的区间一致 ——
+     不然用户在页顶切成「去年」，番茄那张卡还在说「近 30 天」，
+     两张卡的数字对不上，人会以为统计坏了。 */
+  const curRange = rangeOf(rangeKey, custom);
+  const rangeFrom = curRange.from;
+  const rangeTo = curRange.to;
 
   const bodyOf = (k: CardKey) => {
     switch (k) {
@@ -275,12 +328,17 @@ export function StatsView() {
 
       case 'pomo':
         return (
-          <div className="card">
-            <h3>番茄钟</h3>
-            <div className="kpi-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <div className="kpi"><div className="k">累计颗数</div><div className="v">{s.pomodoroCount}</div></div>
-              <div className="kpi"><div className="k">累计专注</div><div className="v">{(s.pomodoroMinutes / 60).toFixed(1)}<small>小时</small></div></div>
-            </div>
+          /* 第 131 条：不再自己拼两个数字，改用番茄页那同一个洞察面板。
+            用户的原话是「数据来源是同一份，只是组件模块复用」——
+             那就别只复用数据、不复用画法：两处各画一套，迟早一个改了另一个忘改。
+             compact 只给"专注有多少"这个横向对比需要的信息，细节回番茄页看。 */
+          <div className="card stat-pomo">
+            <PomoInsightPanel
+              hideRange
+              compact
+              from={rangeFrom}
+              to={rangeTo}
+            />
             <div className="row" style={{ marginTop: 10 }}>
               <button className="btn sm" onClick={() => void setView('pomodoro')}>去看番茄钟</button>
             </div>
@@ -384,7 +442,12 @@ export function StatsView() {
     <>
       <Topbar
         title="统计"
-        sub={s.firstDate ? `${s.firstDate} 起 · 共 ${spanDays} 天` : undefined}
+        lock={{ scope: 'stats', label: '统计' }}
+        sub={
+          s.rangeFrom || s.rangeTo
+            ? `${s.rangeFrom || '最早'} → ${s.rangeTo || '今天'} · 区间内 ${s.rangeDays || 0} 天`
+            : (s.firstDate ? `${s.firstDate} 起 · 共 ${spanDays} 天` : undefined)
+        }
         right={
           <button
             className={`btn sm ${sortOn ? 'primary' : ''}`}
@@ -396,6 +459,49 @@ export function StatsView() {
         }
       />
       <div className="wrap wide">
+        {/* 第 12 条：时间区间 */}
+        <div className="card stats-range">
+          <div className="row">
+            <span className="small muted"><Icon name="calendar" size={12} />时间区间</span>
+            <div className="seg">
+              {RANGE_ITEMS.map((r) => (
+                <button
+                  key={r.v}
+                  className={`seg-b ${rangeKey === r.v ? 'on' : ''}`}
+                  title={r.tip}
+                  onClick={() => setRangeKey(r.v)}
+                >
+                  {r.n}
+                </button>
+              ))}
+            </div>
+            {rangeKey === 'custom' ? (
+              <>
+                <input
+                  type="date" className="inp" style={{ width: 148 }}
+                  value={custom.from}
+                  onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
+                />
+                <span className="small muted">到</span>
+                <input
+                  type="date" className="inp" style={{ width: 148 }}
+                  value={custom.to}
+                  onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
+                />
+              </>
+            ) : null}
+            <div style={{ flex: 1 }} />
+            {rangeKey !== 'all' ? (
+              <button className="btn sm" onClick={() => setRangeKey('all')}>回到全部</button>
+            ) : null}
+          </div>
+          <div className="small muted" style={{ marginTop: 6, lineHeight: 1.7 }}>
+            {/* 说清楚哪些数字跟着区间走、哪些不跟，否则用户会以为连续天数坏了 */}
+            日记、字数、打卡、番茄、标签、心情都按区间统计；
+            <b>当前连续</b>和<b>最长连续</b>天生是跨全历史的指标，不随区间变化。
+          </div>
+        </div>
+
         <RankBoard />
 
         {sortOn ? (

@@ -5,6 +5,8 @@ import { Dialog, Topbar } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { pad, shiftMonth, todayKey } from '../lib/date';
 import { useDragSort } from '../components/DragSort';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
+import { Jars } from './Jars';
 import type { AccountItem, LedgerData, LedgerInsight, LedgerItem, RecurItem } from '../types';
 import {
   Donut, CatBars, Trend, Bars, WeekdayRadar, Heatmap, TopList, BalanceSplit, DailyCompare,
@@ -91,6 +93,8 @@ export function LedgerView() {
   const [catMgr, setCatMgr] = useState(false);
 
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  /* 罐子里的钱要单独拿出来，才能加进「总资产」 */
+  const [jarTotal, setJarTotal] = useState(0);
   const [recurs, setRecurs] = useState<RecurItem[]>([]);
 
   /* ---------- 图表（第 205 条） ---------- */
@@ -153,6 +157,12 @@ export function LedgerView() {
     try {
       setAccounts(await api.ledgerAccounts());
     } catch { /* 账户读不出来也不耽误记账 */ }
+    /* 罐子里的钱也是用户的钱。总资产 = 账户余额 + 罐子余额，
+       少的这一半要从这里补上 —— 不然存 100 进罐子，
+       「总资产」直接掉 100，用户以为钱丢了。 */
+    try {
+      setJarTotal((await api.jarList())?.total || 0);
+    } catch { setJarTotal(0); }
   }, []);
 
   const loadRecur = useCallback(async () => {
@@ -277,6 +287,11 @@ export function LedgerView() {
     /*
      * 抬头的小计（收入/支出/笔数）直接用 SQL 的 GROUP BY 结果，
      * 前端只按日期把明细挂上去，不再自己 reduce。
+     *
+     * 骨架必须是**明细口径**，不能用 days。
+     * days 排掉了罐子流水（合计口径），于是「那天只有存钱/取钱」的日子根本不在 days 里，
+     * 明细虽然拿到了却永远挂不上去 —— 用户在账本里看不到自己存进罐子的钱，会以为丢了。
+     * 后端因此多给一个 dayItems（明细口径的天），两套口径分清楚，谁也别冒充谁。
      */
     const bucket = new Map<string, LedgerItem[]>();
     for (const it of shownItems) {
@@ -284,14 +299,29 @@ export function LedgerView() {
       if (arr) arr.push(it);
       else bucket.set(it.date, [it]);
     }
-    return (data?.days || []).map((d) => ({
-      date: d.date,
-      items: bucket.get(d.date) || [],
-      inSum: d.inSum,
-      outSum: d.outSum,
-      inN: d.inN,
-      outN: d.outN,
-    }));
+    const dayMap = new Map((data?.days || []).map((d) => [d.date, d]));
+
+    /* 有 dayItems 就用它；万一后端是老的没这个字段，退回 items 的 key ——
+       items 本来就是要显示的全部明细，拿它当骨架永远不会漏。 */
+    const order = (data?.dayItems?.length
+      ? data.dayItems.map((d) => d.date)
+      : [...bucket.keys()]
+    ).slice();
+
+    return order
+      .filter((date) => bucket.has(date))       // 排序键来自后端，但只渲染真有明细的
+      .map((date) => {
+        const d = dayMap.get(date);
+        return {
+          date,
+          items: bucket.get(date) || [],
+          // 罐子流水那天没有收支小计，按定义就是 0
+          inSum: d?.inSum ?? 0,
+          outSum: d?.outSum ?? 0,
+          inN: d?.inN ?? 0,
+          outN: d?.outN ?? 0,
+        };
+      });
   }, [data, shownItems, sortBy]);
 
   const expense = data?.expense || 0;
@@ -369,6 +399,40 @@ export function LedgerView() {
       toast('没删掉，再试一次');
     }
   };
+
+  /* ---------------- 右键菜单（第 235 条） ----------------
+   *
+   * 账本一行只有「改 / 删除」两个按钮，位置还很挤（金额右边就是按钮）。
+   * 但一笔账常见的动作不止这两个：
+   *   ① 同一天同一类再记一笔（比如连着买两样东西）—— 手输一遍很烦
+   *   ② 把这笔挪到别的日期 —— 忘了补记是常事
+   * 这两件事以前都得先点「改」再改日期、或者重新手打一遍，右键里一步就够了。
+   */
+  const ctx = useContextMenu();
+
+  /** 复制一笔：金额 / 分类 / 备注 / 账户照搬，日期默认今天 */
+  const duplicate = async (it: LedgerItem) => {
+    try {
+      await api.ledgerAdd({
+        date: todayKey(), kind: it.kind, amount: Number(it.amount) || 0,
+        cat: it.cat || '其他', note: it.note || '',
+        accountId: it.accountId || undefined,
+      });
+      await loadAccounts();
+      if (todayKey().slice(0, 7) !== ym) setYm(todayKey().slice(0, 7));
+      else await load(ym);
+      toast('已照这一笔再记一笔（日期=今天）');
+    } catch {
+      toast('没复制成，再试一次');
+    }
+  };
+
+  const menuFor = (it: LedgerItem): MenuItem[] => [
+    { label: '修改这一笔', hint: '金额 / 分类 / 日期', onClick: () => setEditItem(it) },
+    { label: '照这样再记一笔', hint: '日期记为今天', onClick: () => void duplicate(it) },
+    { sep: true },
+    { label: '删除这一笔', hint: '找不回来', danger: true, onClick: () => void remove(it) },
+  ];
 
   /* ---------- 账户 ---------- */
 
@@ -582,6 +646,7 @@ export function LedgerView() {
             <button className={`seg-b ${ym === shiftMonth(cur, -1) ? 'on' : ''}`} onClick={() => setYm(shiftMonth(cur, -1))}>上月</button>
           </div>
         }
+        lock={{ scope: 'ledger', label: '记账本' }}
       />
       <div className="wrap">
         <div className="card">
@@ -605,6 +670,10 @@ export function LedgerView() {
             <div className="empty small">还没有账户。加一个「现金」「银行卡」，记账时就能看出每个账户还剩多少。</div>
           )}
         </div>
+
+        {/* 第 97 条：储蓄罐。放在账户和预算之间 ——
+            眼睛的顺序是「我有哪些账户 → 我在攒什么 → 这个月能花多少」 */}
+        <Jars amt={amt} accounts={accounts} onChanged={async () => { await load(ym); await loadAccounts(); }} />
 
         <div className="card">
           <h3>
@@ -1054,15 +1123,35 @@ export function LedgerView() {
                   {g.outSum > 0 ? `支出 ${amt(g.outSum)}` : ''}
                   {g.outSum > 0 && g.inSum > 0 ? ' · ' : ''}
                   {g.inSum > 0 ? `收入 ${amt(g.inSum)}` : ''}
+                  {/* 这天只有罐子流水时，上面两个都是 0，抬头会是一片空白 ——
+                      补一句说明，别让人以为是数据没读到。 */}
+                  {g.outSum === 0 && g.inSum === 0 && g.items.some((x) => x.jarId)
+                    ? '只有罐子存取，不算收支'
+                    : ''}
                 </span>
               </div>
-              {g.items.map((it) => (
-                <div className="lg-item" key={it.id}>
+              {g.items.map((it) => {
+                /* 罐子流水的 kind 说的是「罐子方向」，不是账户方向：
+                   kind=in 是钱存进罐子，kind=out 是从罐子取出。
+                   直接按 kind 画 +/− 会让人读成"收入 500 / 支出 500"，那是假的。
+                   所以单独给它一个标记，金额也不加正负号。 */
+                const isJar = !!it.jarId;
+                return (
+                <div
+                  className="lg-item"
+                  key={it.id}
+                  onContextMenu={(e) => ctx.open(e, menuFor(it))}
+                >
                   <span className="lg-cat">{it.cat || '未分类'}</span>
                   <span className="lg-note">{it.note || '—'}</span>
+                  {isJar ? (
+                    <span className="lg-acc-tag" title="储蓄罐的存取不算收支，钱只是换了个地方">
+                      {it.kind === 'in' ? '存进罐子' : '罐子取出'}
+                    </span>
+                  ) : null}
                   {it.accountId && accName(it.accountId) ? <span className="lg-acc-tag">{accName(it.accountId)}</span> : null}
-                  <span className={`lg-amt ${it.kind === 'in' ? 'in' : 'out'}`}>
-                    {it.kind === 'in' ? '+' : '-'}{amt(Number(it.amount) || 0)}
+                  <span className={`lg-amt ${isJar ? 'muted' : it.kind === 'in' ? 'in' : 'out'}`}>
+                    {isJar ? (it.kind === 'in' ? '→ ' : '← ') : (it.kind === 'in' ? '+' : '-')}{amt(Number(it.amount) || 0)}
                   </span>
                   <button
                     className="btn sm ghost lg-edit"
@@ -1076,7 +1165,8 @@ export function LedgerView() {
                     onClick={() => void remove(it)}
                   >删除</button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ))
         ) : (
@@ -1160,10 +1250,23 @@ export function LedgerView() {
           {/* 第 162 条：先给一张总览，再给可编辑的明细 */}
           {accounts.length ? (
             <div className="lg-acc-sum">
-              <div>
-                <span className="k">总资产</span>
-                <b>{amt(accounts.reduce((n, a) => n + (a.balance || 0), 0))}</b>
-              </div>
+              {(() => {
+                /* 总资产 = 账户余额 + 罐子余额。
+                   罐子里的钱只是换了个地方待着，不该从总资产里消失。
+                   罐子为 0 时不多显示一行，避免老用户看到没见过的数字。 */
+                const accSum = accounts.reduce((n, a) => n + (a.balance || 0), 0);
+                return (
+                  <div>
+                    <span className="k">总资产</span>
+                    <b>{amt(accSum + jarTotal)}</b>
+                    {Math.abs(jarTotal) > 0.004 ? (
+                      <span className="small muted" style={{ marginLeft: 6 }}>
+                        （账户 {amt(accSum)} · 罐子 {amt(jarTotal)}）
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <div>
                 <span className="k">本月流入</span>
                 <b className="in">{amt(accounts.reduce((n, a) => n + (a.monthIn || 0), 0))}</b>
@@ -1480,6 +1583,9 @@ export function LedgerView() {
         .lg-del{opacity:.45;transition:.12s}
         .lg-item:hover .lg-del{opacity:1}
       `}</style>
+
+      {/* 第 235 条：右键菜单出口 */}
+      {ctx.node}
     </>
   );
 }

@@ -30,6 +30,7 @@ export function MediaPage({ initialTab = 'media' }: { initialTab?: 'media' | 'so
             <Icon name="sliders" size={13} />在设置里管理
           </button>
         )}
+        lock={{ scope: 'media', label: '多媒体库' }}
       />
       <div className="wrap">
         <div className="seg" style={{ marginBottom: 14 }}>

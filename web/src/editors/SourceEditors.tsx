@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { bbToHtml, BB_WRAP } from '../lib/bbcode';
+import { bbToHtml, BB_WRAP, mixedToHtml } from '../lib/bbcode';
 import { mdToHtml } from '../lib/markdown';
 import { renderTexInMarkdown } from '../lib/latex';
 import { askText } from '../components/ui';
@@ -90,6 +90,19 @@ export const mdRender = (src: string) => mdMediaFix(renderTexInMarkdown(src, mdT
 /** BBCode 的渲染入口：[img]/[video]/[audio] 先换成占位，渲染完再塞回媒体库解析出的标签 */
 export const bbRender = (src: string) => bbMediaWrap(src, bbToHtml);
 
+/**
+ * #144：两个编辑器共用的渲染入口 —— 两种语法都认。
+ *
+ * 用户原话：「我希望一个输入框，无须切换就能同时用」。
+ * 以前切模式等于换一份内容，想粘一段论坛 BBCode 进 Markdown 日记就得来回切。
+ * 现在不管停在哪个模式，`**粗体**` 和 `[b]粗体[/b]` 都渲染成粗体。
+ *
+ * 媒体引用也要先过 bbMediaWrap：`[img]` 在 Markdown 模式下以前是字面量，
+ * 现在同一个输入框里写 `[img]媒体id[/img]` 也能出图。
+ */
+export const mixedRender = (src: string) =>
+  bbMediaWrap(src, (s) => mdMediaFix(renderTexInMarkdown(s, (x) => mixedToHtml(x, mdToHtml))));
+
 /** Markdown：左写右预览，Typora 那种手感 */
 export function MarkdownEditor({
   src, onChange, insertRef,
@@ -109,7 +122,7 @@ export function MarkdownEditor({
       const s = ta.selectionStart;
       const e = ta.selectionEnd;
       const next = ta.value.slice(0, s) + text + ta.value.slice(e);
-      onChange(next, mdRender(next));
+      onChange(next, mixedRender(next));
       const caret = s + text.length;
       requestAnimationFrame(() => {
         ta.focus();
@@ -129,14 +142,14 @@ export function MarkdownEditor({
           minHeight: 260, fontFamily: 'ui-monospace, Consolas, monospace',
           fontSize: 13.5, lineHeight: 1.75, resize: 'vertical',
         }}
-        placeholder={'# 支持 Markdown\n**粗体** *斜体* ~~删除~~ 反引号包代码\n- 列表\n> 引用\n![图片名](文件名.png)\n视频：![视频](文件名.mp4) 或直接写 <video src="..."></video>\n行内公式 $E=mc^2$，块级用 $$\\int_0^1 x^2 dx$$'}
-        onChange={(e) => onChange(e.target.value, mdRender(e.target.value))}
+        placeholder={'# Markdown 和 BBCode 都能直接写，不用切换\n**粗体** [b]也是粗体[/b]  *斜体*  [i]也是斜体[/i]  ~~删除~~\n- 列表    [color=#b8623a]红字[/color]    [url=https://…]链接[/url]\n> 引用\n![图片名](文件名.png)\n视频：![视频](文件名.mp4) 或直接写 <video src="..."></video>\n行内公式 $E=mc^2$，块级用 $$\\int_0^1 x^2 dx$$'}
+        onChange={(e) => onChange(e.target.value, mixedRender(e.target.value))}
       />
       <SplitGrip dragging={split.dragging} onDown={split.onDown} onReset={split.reset} />
       <div
         className="rt"
         style={{ minHeight: 240, borderLeft: '1px solid var(--line2)', paddingLeft: 16 }}
-        dangerouslySetInnerHTML={{ __html: mdRender(src) }}
+        dangerouslySetInnerHTML={{ __html: mixedRender(src) }}
       />
     </div>
   );
@@ -181,7 +194,7 @@ export function BBCodeEditor({
     const e = at ? at[1] : ta.selectionEnd;
     const next = ta.value.slice(0, s) + text + ta.value.slice(e);
     const caret = s + text.length;
-    onChange(next, bbRender(next));
+    onChange(next, mixedRender(next));
     requestAnimationFrame(() => {
       ta.focus();
       ta.setSelectionRange(caret, caret);
@@ -246,10 +259,10 @@ export function BBCodeEditor({
           ref={taRef}
           value={src}
           placeholder={'点上面的按钮插入 BBCode 标签，不用手敲。\n例：[b]加粗[/b]  [color=red]红字[/color]  [img]媒体id[/img]  [video]媒体id[/video]'}
-          onChange={(e) => onChange(e.target.value, bbRender(e.target.value))}
+          onChange={(e) => onChange(e.target.value, mixedRender(e.target.value))}
         />
         <SplitGrip dragging={split.dragging} onDown={split.onDown} onReset={split.reset} />
-        <div className="bbpreview rt" dangerouslySetInnerHTML={{ __html: bbRender(src) }} />
+        <div className="bbpreview rt" dangerouslySetInnerHTML={{ __html: mixedRender(src) }} />
       </div>
       {picking ? (
         <MediaPicker

@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useStore } from '../store';
 import { Topbar, Dialog } from '../components/ui';
 import { Icon } from '../components/Icons';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { parseKey, todayKey } from '../lib/date';
 
 /**
@@ -122,6 +123,44 @@ export function MilestonesView() {
     await setSetting('tlDir', v);
   };
 
+  /* 第 235 条：时间轴的右键菜单。
+     这一页原来只有卡片上那个小小的 ✕ —— 想改没入口（只能靠点卡片，但谁知道卡片能点），
+     想「复制某一年的小结」这种更是没处放。
+     所以菜单分两层：点在卡片上给「这一条」的操作，点在年份/月份标题上给「这一段时间」的操作。 */
+  const ctx = useContextMenu();
+
+  const menuForNode = (m: Milestone): MenuItem[] => {
+    const k = kindOf(m.kind);
+    return [
+      { label: '改这一条…', onClick: () => startEdit(m) },
+      { label: `复制标题`, onClick: () => { void navigator.clipboard?.writeText(m.title).then(() => {}, () => {}); } },
+      { label: '复制日期', onClick: () => { void navigator.clipboard?.writeText(m.date).then(() => {}, () => {}); } },
+      { sep: true },
+      { label: `标签：${k.n}`, disabled: true },
+      { label: '换个标签…', onClick: () => startEdit(m) },
+      { sep: true },
+      {
+        label: '删掉这一条', danger: true, confirm: `删掉「${m.title}」？删了就找不回来了。`,
+        onClick: () => void (async () => { await api.milestone.delete(m.id); await load(); toast('已删掉'); })(),
+      },
+    ];
+  };
+
+  /* 年份标题上的菜单只放**真能执行**的。
+     这一页没有「按年筛选」这个能力，所以别写一句「看这一年的每个月」——
+     那是假动作，点了什么都不会发生，比没有菜单更糟。 */
+  const menuForYear = (year: string, count: number): MenuItem[] => [
+    { label: `${year} 年 · ${count} 件`, disabled: true },
+    { sep: true },
+    { label: '复制年份', onClick: () => { void navigator.clipboard?.writeText(year).then(() => {}, () => {}); } },
+    {
+      label: dir === 'v' ? '换成横向铺开' : '换成纵向往下读',
+      onClick: () => void switchDir(dir === 'v' ? 'h' : 'v'),
+    },
+    { sep: true },
+    { label: '记一件大事…', onClick: startNew },
+  ];
+
   return (
     <>
       <Topbar
@@ -142,6 +181,7 @@ export function MilestonesView() {
           </button>
           <button className="btn primary" onClick={startNew}><Icon name="plus" size={14} />记一件大事</button>
         </>}
+        lock={{ scope: 'timeline', label: '时间轴' }}
       />
       <div className="wrap">
         {loading ? null : items.length === 0 ? (
@@ -160,7 +200,7 @@ export function MilestonesView() {
           <div className={`msline ${dir === 'h' ? 'h' : ''}`} data-msdir={dir}>
             {groups.map((g) => (
               <div className="msyear" key={g.year}>
-                <div className="msyear-h">
+                <div className="msyear-h" onContextMenu={(e) => ctx.open(e, menuForYear(g.year, g.count))}>
                   <span className="msyear-y">{g.year}</span>
                   <span className="small muted">{g.count} 件</span>
                 </div>
@@ -179,7 +219,7 @@ export function MilestonesView() {
                         return (
                           <div className="msnode" key={m.id}>
                             <span className="msdot" style={{ background: k.c }} />
-                            <div className="mscard" onClick={() => startEdit(m)} title="点一下改">
+                            <div className="mscard" onClick={() => startEdit(m)} title="点一下改" onContextMenu={(e) => ctx.open(e, menuForNode(m))}>
                               <div className="mscard-top">
                                 <span className="msdate">{d.getMonth() + 1} 月 {d.getDate()} 日</span>
                                 {m.kind ? <span className="mskind" style={{ color: k.c, borderColor: k.c }}>{k.n}</span> : null}
@@ -233,6 +273,9 @@ export function MilestonesView() {
           }}
         />
       ) : null}
+
+      {/* 第 235 条：右键菜单浮层挂点 */}
+      {ctx.node}
     </>
   );
 }

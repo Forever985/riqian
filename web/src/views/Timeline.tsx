@@ -2,11 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import { Topbar } from '../components/ui';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { MOODS } from '../lib/const';
 import type { EntryListItem } from '../types';
 
 type Grain = 'year' | 'month' | 'day';
-type Dir = 'v' | 'h';
+/**
+ * 第 95 条：用户要求「四个方向，可以设置」。
+ * 原来只有「纵向（从上往下）」和「横向（从左往右）」两种，本质是同一条轴的两个朝向；
+ * 这里补上反向的两种 —— 时间从左往右 / 从右往左、从上往下 / 从下往上，
+ * 一共四个方向。反向只是「轴的头部在哪一头」，数据本身照旧倒序读。
+ */
+type Dir = 'v' | 'vrev' | 'h' | 'hrev';
 
 /** 一页取多少条 */
 const PAGE = 100;
@@ -48,6 +55,8 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
   const [grain, setGrain] = useState<Grain>('day');
   const [dir, setDir] = useState<Dir>('v');
   const [year, setYear] = useState('');
+  /* 第 187 条：按月粒度下钻后要知道是哪个月，所以除了 year 还要留 month */
+  const [month, setMonth] = useState('');
 
   /** 按 date 去重后倒序：分页追加时不会因为边界重复多出一条 */
   const merge = (prev: EntryListItem[], add: EntryListItem[]): EntryListItem[] => {
@@ -104,6 +113,70 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
     [items, year],
   );
 
+  /* 第 187 条：下钻之后实际显示的那一段（月粒度再筛一次月） */
+  const shown = useMemo(
+    () => (month ? pool.filter((it) => it.date.startsWith(month)) : pool),
+    [pool, month],
+  );
+
+  /**
+   * 第 187 条：粒度下钻。
+   * 用户原话：「在粒度按年的时候点击某个年，会进入……」——
+   * 意思是年节点不是终点，点进去应该看到这一年的月份，再点月份看到每一天。
+   *   year  → 点一个年  → 切到「按月」，只留这一年
+   *   month → 点一个月  → 切到「按日」，只留这个月
+   *   day   → 点一天    → 打开那天的日记（原有行为）
+   */
+  const drill = (n: Node) => {
+    if (grain === 'year') {
+      setYear(n.key);
+      setMonth('');
+      setGrain('month');
+      return;
+    }
+    if (grain === 'month') {
+      setMonth(n.key);
+      setGrain('day');
+      return;
+    }
+    void setDate(n.date);
+  };
+
+  /*
+   * 第 235 条：时间轴的右键菜单。
+   *
+   * 这一页没有"编辑/删除"按钮（节点是聚合出来的，不是数据库里的行），
+   * 所以菜单的价值全在「换一种方式看同一段」：
+   *   · 按年看的时候 → 下钻到这一年的每个月
+   *   · 按月看的时候 → 下钻到这个月的每一天；也可以直接跳去记录页筛这个月
+   *   · 按天看的时候 → 打开那天写；跳去记录页找同一天的条目
+   * 这些原来都得靠猜（点卡片才会下钻，但卡片上没写会跳到哪），
+   * 摆成文字菜单就一目了然了。
+   */
+  const ctx = useContextMenu();
+  const openRecords = useStore((s) => s.openRecords);
+
+  const menuFor = (n: Node): MenuItem[] => {
+    if (grain === 'year') {
+      return [
+        { label: `看 ${n.key} 年的每个月`, hint: '下钻', onClick: () => drill(n) },
+      ];
+    }
+    if (grain === 'month') {
+      return [
+        { label: `看 ${n.key} 的每一天`, hint: '下钻', onClick: () => drill(n) },
+        { sep: true },
+        { label: '在记录里筛这个月', onClick: () => openRecords({ q: n.key }) },
+      ];
+    }
+    return [
+      { label: `打开 ${n.date}`, onClick: () => drill(n) },
+      { label: '在记录里找这一天', onClick: () => openRecords({ q: n.date }) },
+      { sep: true },
+      { label: '复制日期', onClick: () => { void navigator.clipboard?.writeText(n.date).then(() => {}, () => {}); } },
+    ];
+  };
+
   const nodes = useMemo<Node[]>(() => {
     const moodOf = (it: EntryListItem) => {
       if (!moodMod) return '';
@@ -112,7 +185,7 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
     };
 
     if (grain === 'day') {
-      return pool.map((it) => {
+      return shown.map((it) => {
         const [y, m, d] = it.date.split('-').map(Number);
         const wd = new Date(y, m - 1, d).getDay();
         const plain = clean(it.plain);
@@ -131,7 +204,7 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
 
     const keyLen = grain === 'year' ? 4 : 7;
     const map = new Map<string, EntryListItem[]>();
-    for (const it of pool) {
+    for (const it of shown) {
       const k = it.date.slice(0, keyLen);
       const arr = map.get(k);
       if (arr) arr.push(it); else map.set(k, [it]);
@@ -175,18 +248,21 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
           count: arr.length,
         };
       });
-  }, [pool, grain, moodMod]);
+  }, [shown, grain, moodMod]);
 
-  const totalChars = pool.reduce((n, x) => n + (x.chars || 0), 0);
+  const totalChars = shown.reduce((n, x) => n + (x.chars || 0), 0);
 
   return (
     <>
       {embedded ? null : (
         <Topbar
           title="时间轴"
-          sub={`${pool.length} 天 · ${totalChars.toLocaleString('zh-CN')} 字 · 已加载 ${items.length} 条`}
+          sub={`${shown.length} 天 · ${totalChars.toLocaleString('zh-CN')} 字 · 已加载 ${items.length} 条`}
           right={
-            <select className="inp" style={{ width: 132 }} value={year} onChange={(e) => setYear(e.target.value)}>
+            <select
+              className="inp" style={{ width: 132 }} value={year}
+              onChange={(e) => { setYear(e.target.value); setMonth(''); }}
+            >
               <option value="">全部年份</option>
               {years.map((y) => <option key={y} value={y}>{y} 年</option>)}
             </select>
@@ -199,21 +275,53 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
             <span className="small muted">粒度</span>
             <div className="seg">
               {([['year', '按年'], ['month', '按月'], ['day', '按日']] as [Grain, string][]).map(([v, n]) => (
-                <button key={v} className={`seg-b ${grain === v ? 'on' : ''}`} onClick={() => setGrain(v)}>{n}</button>
+                <button
+                  key={v} className={`seg-b ${grain === v ? 'on' : ''}`}
+                  onClick={() => { setGrain(v); if (v === 'year') { setYear(''); setMonth(''); } if (v === 'month') setMonth(''); }}
+                >
+                  {n}
+                </button>
               ))}
             </div>
             <span className="small muted" style={{ marginLeft: 10 }}>方向</span>
             <div className="seg">
-              {([['v', '纵向'], ['h', '横向']] as [Dir, string][]).map(([v, n]) => (
+              {/* 第 95 条：四个方向 —— 纵向 / 纵向反向 / 横向 / 横向反向 */}
+              {([['v', '纵向'], ['vrev', '纵向往上'], ['h', '横向'], ['hrev', '横向倒着']] as [Dir, string][]).map(([v, n]) => (
                 <button key={v} className={`seg-b ${dir === v ? 'on' : ''}`} onClick={() => setDir(v)}>{n}</button>
               ))}
             </div>
             <div style={{ flex: 1 }} />
             <span className="small muted">
               {grain === 'day' ? '每个点是一天' : grain === 'month' ? '每个点是一个月' : '每个点是一年'}
-              {dir === 'h' ? ' · 可左右拖动' : ' · 点标题打开那一天'}
+              {grain === 'day' ? ' · 点标题打开那一天' : ' · 点节点往下钻一级'}
             </span>
           </div>
+          {/* 第 187 条：下钻之后给一条回退路径，否则进到月里就出不来 */}
+          {(year || month) ? (
+            <div className="row tl-crumb">
+              <span className="small muted">正在看</span>
+              <button className="tl-crumb-b" onClick={() => { setYear(''); setMonth(''); setGrain('year'); }}>全部年份</button>
+              {year ? (
+                <>
+                  <span className="small muted">›</span>
+                  <button
+                    className="tl-crumb-b"
+                    onClick={() => { setMonth(''); setGrain('month'); }}
+                  >
+                    {year} 年
+                  </button>
+                </>
+              ) : null}
+              {month ? (
+                <>
+                  <span className="small muted">›</span>
+                  <span className="tl-crumb-cur">{Number(month.slice(5, 7))} 月</span>
+                </>
+              ) : null}
+              <div style={{ flex: 1 }} />
+              <button className="btn small" onClick={() => { setYear(''); setMonth(''); setGrain('year'); }}>返回年视图</button>
+            </div>
+          ) : null}
         </div>
 
         {loading ? (
@@ -222,22 +330,29 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
           <div className="card">
             <div className="empty">
               {items.length
-                ? (year && hasMore
-                  ? '这一年还没有加载到的日记，点下面「加载更早的」再往下翻。'
-                  : '这一年还没有日记，换个年份看看。')
+                ? (month
+                  ? '这个月还没有日记，回到年视图换个时间吧。'
+                  : year && hasMore
+                    ? '这一年还没有加载到的日记，点下面「加载更早的」再往下翻。'
+                    : '这一年还没有日记，换个年份看看。')
                 : '还没有日记。写下第一篇之后，这里会按时间把它们串起来。'}
             </div>
           </div>
-        ) : dir === 'v' ? (
-          <div className="card tl-v">
-            {nodes.map((n) => (
-              <div className="tl-node" key={n.key}>
+        ) : dir === 'v' || dir === 'vrev' ? (
+          /* 第 95 条：纵向 / 纵向往上。vrev 只是把节点顺序反过来，轴还是那条竖线 */
+          <div className={`card tl-v ${dir === 'vrev' ? 'rev' : ''}`}>
+            {(dir === 'vrev' ? nodes.slice().reverse() : nodes).map((n) => (
+              <div className="tl-node" key={n.key} onContextMenu={(e) => ctx.open(e, menuFor(n))}>
                 <div className="tl-rail">
                   <span className="tl-dot" />
                   <div className="tl-axis">{n.axis}</div>
                   <div className="tl-axis-sub">{n.axisSub}</div>
                 </div>
-                <button className={`tl-card ${n.count ? 'agg' : ''}`} onClick={() => void setDate(n.date)} title={`打开 ${n.date}`}>
+                <button
+                  className={`tl-card ${n.count ? 'agg' : ''}`}
+                  onClick={() => drill(n)}
+                  title={grain === 'day' ? `打开 ${n.date}` : `看 ${grain === 'year' ? '这一年的每个月' : '这个月的每一天'}`}
+                >
                   <div className="tl-t">{n.title}</div>
                   {n.excerpt ? <div className="tl-x">{n.excerpt}</div> : null}
                   <div className="tl-m">
@@ -250,16 +365,21 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
             ))}
           </div>
         ) : (
+          /* 第 95 条：横向 / 横向倒着（从右往左读，符合「时间往前推」的直觉） */
           <div className="card tl-h-wrap">
-            <div className="tl-h">
-              {nodes.map((n) => (
-                <div className="tl-hnode" key={n.key}>
+            <div className={`tl-h ${dir === 'hrev' ? 'rev' : ''}`}>
+              {(dir === 'hrev' ? nodes.slice().reverse() : nodes).map((n) => (
+                <div className="tl-hnode" key={n.key} onContextMenu={(e) => ctx.open(e, menuFor(n))}>
                   <div className="tl-haxis">
                     <div className="tl-axis">{n.axis}</div>
                     <div className="tl-axis-sub">{n.axisSub}</div>
                   </div>
                   <div className="tl-hline"><span className="tl-dot" /></div>
-                  <button className={`tl-card ${n.count ? 'agg' : ''}`} onClick={() => void setDate(n.date)} title={`打开 ${n.date}`}>
+                  <button
+                    className={`tl-card ${n.count ? 'agg' : ''}`}
+                    onClick={() => drill(n)}
+                    title={grain === 'day' ? `打开 ${n.date}` : `看 ${grain === 'year' ? '这一年的每个月' : '这个月的每一天'}`}
+                  >
                     <div className="tl-t">{n.title}</div>
                     {n.excerpt ? <div className="tl-x">{n.excerpt}</div> : null}
                     <div className="tl-m">
@@ -289,6 +409,8 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
           </div>
         ) : null}
       </div>
+
+      {ctx.node}
 
       <style>{`
         .tl-tools{padding:12px 16px}
@@ -332,6 +454,24 @@ export function TimelineView({ embedded = false }: { embedded?: boolean } = {}) 
         .tl-hline .tl-dot{position:static;box-shadow:0 0 0 3px var(--panel)}
         .tl-h .tl-card{margin:0;flex:0 0 auto}
         .tl-h .tl-x{-webkit-line-clamp:3}
+        /* 第 95 条：反向的两种方向。
+           纵向反向 = 最新的在最下面（往上读就是往前翻），
+           横向反向 = 最新的在最右边（滚到右头才是刚开始写的时候）。
+           这里只翻转内容的排列顺序，不改滚动容器的方向 —— dir="rtl" 在很多地方会连带
+           翻转滚动条和 padding，字形也会受影响，不如直接 reverse 数组来得干净。 */
+        .tl-v.rev .tl-rail:before{top:0;bottom:-14px}
+        .tl-v.rev .tl-node:first-child .tl-rail:before{top:0}
+        .tl-v.rev .tl-node:last-child .tl-rail:before{bottom:calc(100% - 13px)}
+        .tl-h.rev{flex-direction:row-reverse}
+        .tl-h.rev .tl-hline:before{left:-14px;right:4px}
+        /* 第 187 条：下钻面包屑 */
+        .tl-crumb{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line2)}
+        .tl-crumb-b{
+          border:0;background:transparent;cursor:pointer;font:inherit;
+          font-size:12px;color:var(--accent);padding:1px 2px;border-radius:4px;
+        }
+        .tl-crumb-b:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+        .tl-crumb-cur{font-size:12px;color:var(--ink2);font-weight:600}
       `}</style>
     </>
   );

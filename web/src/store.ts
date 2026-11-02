@@ -330,6 +330,7 @@ export const useStore = create<AppStore>()((set, get) => ({
     // 锁之前先把没落盘的草稿写完，否则刚打的那段会跟着一起消失
     if (st.dirty) void st.flushSave();
     set({ quick: null, palette: false, appLocked: true });
+    void api.shell.lockState(1).catch(() => null);   // 第 75 条：托盘图标换成小锁
   },
 
   /* ---------------- 启动 / 导航 ---------------- */
@@ -407,6 +408,7 @@ export const useStore = create<AppStore>()((set, get) => ({
         if (vs.hasMain && (vs.rules || []).some((r) => r.scope === 'app')) {
           const c = await api.vault.check('app');
           set({ appLocked: c.locked });
+          void api.shell.lockState(c.locked ? 1 : 0).catch(() => null);   // 第 75 条
         }
       } catch { /* 没有密码功能也不影响启动 */ }
 
@@ -574,7 +576,14 @@ export const useStore = create<AppStore>()((set, get) => ({
   setActiveNote: (id) => set({ activeNoteId: id }),
 
   reloadVault: async () => set({ vault: await api.vault.status() }),
-  setAppLocked: (v) => set({ appLocked: v }),
+  setAppLocked: (v) => {
+    set({ appLocked: v });
+    /*
+     * 第 75 条：锁屏状态同步给宿主，托盘图标会叠一把小锁。
+     * 失败不提示 —— 托盘角标是锦上添花，报错会打扰正常使用。
+     */
+    void api.shell.lockState(v ? 1 : 0).catch(() => null);
+  },
 
   setDate: async (d) => {
     // 关键：换日期前先把当前没落盘的草稿写完，否则 420ms 的防抖会把「上一天的内容」写进新的一天
@@ -691,19 +700,43 @@ export const useStore = create<AppStore>()((set, get) => ({
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     const { date, draft } = get();
     set({ saveState: '保存中…' });
+
+    /* 正文和标签分两段存，失败也要分开报。
+       以前两段套在同一个 try 里：正文写成功了、标签写失败，
+       界面照样弹红色「保存失败」—— 用户以为稿子丢了，实际上正文好好的。
+       误报比不报更伤信任：会让人反复保存、反复检查，甚至去翻备份。 */
     try {
       await api.entry.save({
         date, values: draft.values, fav: draft.fav, bg: draft.bg,
         title: draft.title || '', bgTone: draft.bgTone || '',
       });
+    } catch (e) {
+      // 正文没存进去才是真的失败
+      set({ saveState: '保存失败：' + (e as Error).message, saveBad: true });
+      return;
+    }
+
+    /* 正文已经安全落盘了。标签失败只影响标签，别让它冒充"保存失败"，
+       降级成一句提示，状态仍然是「已保存」。 */
+    let tagWarn = '';
+    try {
       await api.tags.set(date, draft.tags);
-      set({ saveState: '已保存', saveBad: false, dirty: false });
-      // 回填元信息（字数、版本数、关联）但不覆盖正在编辑的草稿
+    } catch (e) {
+      tagWarn = (e as Error).message || '标签没存上';
+      console.warn('[日签] 标签保存失败（正文已保存）', e);
+    }
+
+    set({
+      saveState: tagWarn ? '已保存（标签没存上）' : '已保存',
+      saveBad: false,
+      dirty: false,
+    });
+
+    // 回填元信息（字数、版本数、关联）但不覆盖正在编辑的草稿
+    try {
       const fresh = await api.entry.get(date);
       if (get().date === date) set({ entry: fresh });
-    } catch (e) {
-      set({ saveState: '保存失败：' + (e as Error).message, saveBad: true });
-    }
+    } catch { /* 元信息读不到不影响正文已存的事实 */ }
   },
 
   /* ---------------- 各类数据 ---------------- */

@@ -291,6 +291,7 @@ export function FlowView() {
           <button className={`btn sm ${tw ? 'primary' : ''}`} onClick={() => setTw((x) => !x)}>打字机</button>
           <button className={`btn sm ${focus ? 'primary' : ''}`} onClick={() => setFocus((x) => !x)}>焦点</button>
         </>}
+        lock={{ scope: 'flow', label: '流' }}
       />
       <div className="wrap">
         <div

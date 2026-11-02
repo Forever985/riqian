@@ -553,6 +553,7 @@ export function TodosView() {
             {q ? <button className="sb-clear" onClick={() => setQ('')}>✕</button> : null}
           </div>
         }
+        lock={{ scope: 'todos', label: '待办清单' }}
       />
       <div className="wrap">
         <div className="todo-stack">

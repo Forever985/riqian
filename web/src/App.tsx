@@ -27,6 +27,8 @@ import { ReviewView } from './views/Review';
 import { ChangelogView, ContactView, ManualView } from './views/Info';
 import { DraftsView } from './views/Drafts';
 import { MediaPage } from './views/Library';
+/* 第 55 条：缓存单独一个页面 */
+import { CacheCenterView } from './views/CacheCenter';
 import { LedgerView } from './views/Ledger';
 import { AlarmsView } from './views/Alarms';
 import { MilestonesView } from './views/Milestones';
@@ -182,20 +184,42 @@ function installAlarmHook() {
 /**
  * 第 140 条：打卡提醒。
  *
- * 该不该发（开关、时间、今天发过没有、是不是全打完了）都由宿主判断，
- * 这边只负责喊一声 + 给个「去打卡」的入口，免得两处各记一套状态、迟早对不上。
+ * 该不该发（开关、时间、提前量、间隔、今天发过几次、是不是全打完了）
+ * 都由宿主判断，这边只负责喊一声 + 给个「去打卡」的入口，
+ * 免得两处各记一套状态、迟早对不上。
+ *
+ * 第 98 条补的两件事都在这一层：
+ *   ① 提醒方式为静音时不响铃（但要留角标，不能完全没痕迹）
+ *   ② 第二次开始换语气 —— 原来说完就完了，一律同一句话，
+ *      用户很难意识到"这已经是第三次催了"。
  */
 function installHabitRemindHook() {
-  const w = window as unknown as { __HABIT_REMIND__?: (p: { count?: number; names?: string[] }) => void };
+  const w = window as unknown as {
+    __HABIT_REMIND__?: (p: {
+      count?: number; names?: string[]; nth?: number; max?: number; how?: string;
+    }) => void;
+  };
   w.__HABIT_REMIND__ = (p) => {
     try {
       const n = Number(p?.count) || 0;
       if (n <= 0) return;
       const names = (p?.names || []).filter(Boolean);
-      const head = names.length ? '还没打卡：' + names.join('、') : '今天的卡还没打';
+      const nth = Number(p?.nth) || 1;
+      const list = names.length ? names.join('、') : '';
       const tail = names.length && n > names.length ? ` 等 ${n} 项` : '';
-      useStore.getState().toast(head + tail);
-      playChime(1, true);
+
+      // 第一次只是告知；越往后越直接，但别骂人 —— 这是提醒不是训话
+      const head = nth <= 1
+        ? (list ? `还没打卡：${list}${tail}` : `今天的卡还没打（${n} 项）`)
+        : nth === 2
+          ? (list ? `还差 ${n} 项：${list}${tail}` : `还有 ${n} 项没打卡`)
+          : (list ? `第 ${nth} 次提醒 · 还差 ${n} 项：${list}${tail}` : `第 ${nth} 次提醒 · 还有 ${n} 项`);
+
+      useStore.getState().toast(head);
+
+      /* how: sound 正常响 / silent 完全不出声 / badge 只发通知不响铃。
+         深夜被铃声吵醒比漏一次打卡更让人恼火，所以这个必须听用户的。 */
+      if ((p?.how || 'sound') === 'sound') playChime(1, true);
     } catch { /* 提醒失败不能影响别的 */ }
   };
 }
@@ -367,6 +391,8 @@ export default function App() {
       case 'themeCenter': return <ThemeCenterView />;
       case 'pluginCenter': return <PluginCenterView />;
       case 'workshop': return <WorkshopView />;
+      /* 第 55 条：缓存独立入口。里面全是本地文件统计，没有隐私内容，不加锁 */
+      case 'cache': return <CacheCenterView />;
       case 'settings': return <SettingsView />;
       case 'today': return <Guarded scope="diary" target={date} label="这一天的日记"><TodayView /></Guarded>;
       default: return <TodayView />;

@@ -30,7 +30,7 @@ namespace Riqian
             if (m == "entry.publish") return db.EntryPublish(S(a, "date"), I(a, "published", 1));
             if (m == "entry.status") return db.EntryStatus(S(a, "date"));
             if (m == "entry.drafts") return db.EntryDrafts();
-            if (m == "pomo.insight") return db.PomoInsight(I(a, "days", 30));
+            if (m == "pomo.insight") return db.PomoInsight(I(a, "days", 30), SN(a, "from"), SN(a, "to"));
             if (m == "pomo.day") return db.PomoDay(S(a, "date"));
             if (m == "pomo.months") return db.PomoMonths();
             if (m == "stats.calMonths") return db.CalendarMonths();

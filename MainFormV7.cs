@@ -212,7 +212,9 @@ namespace Riqian
             if (m == "notebook.delete") return db.NotebookDelete(S(a, "id"));
             if (m == "notes.list") return db.Notes(S(a, "notebookId"), S(a, "q"), I(a, "limit", 300));
             if (m == "note.get") return db.NoteGet(S(a, "id"));
-            if (m == "note.save") return db.NoteSave(S(a, "id"), S(a, "notebookId"), S(a, "title"), S(a, "body"), I(a, "pinned", 0));
+            if (m == "note.save") return db.NoteSave(S(a, "id"), S(a, "notebookId"), S(a, "title"), S(a, "body"), I(a, "pinned", 0),
+                /* 第 128 条：颜色 / 图标。不传 = null，等于「这次别动」，自动保存不会把色点抹掉 */
+                S(a, "color"), S(a, "icon"));
             if (m == "note.delete") return db.NoteDelete(S(a, "id"));
             if (m == "note.restore") return db.NoteRestore(S(a, "id"));
             if (m == "notes.trash") return db.NotesTrash();
@@ -238,6 +240,11 @@ namespace Riqian
             if (m == "cache.prune") return db.CachePrune(I(a, "days", 0), I(a, "maxMB", 0));
             if (m == "cache.clear") return db.CacheClear(S(a, "what", "cache"));
             if (m == "cache.open") { OpenPath(CacheDir); return new { ok = true }; }
+
+            /* ---- 第 42 条：桌面常驻便签 ---- */
+            if (m == "sticky.open") return StickyOpen(S(a, "id"));
+            if (m == "sticky.close") return StickyClose(S(a, "id"));
+            if (m == "sticky.list") return StickyList();
 
             /* ---- 设置导出导入 ---- */
             if (m == "settings.export") return db.SettingsExport();

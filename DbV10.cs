@@ -205,11 +205,15 @@ namespace Riqian
             return new { ok = true, id };
         }
 
-        public object NotebookSetParent(string id, string parentId)
-        {
-            Exec("UPDATE notebooks SET parent_id=$p, updated_at=$t WHERE id=$i", ("$p", parentId ?? ""), ("$i", id), ("$t", Now));
-            return new { ok = true };
-        }
+        /// <summary>
+        /// 设置笔记本的上级。**转发到 NotebookSetParent2**，不要在这里另写一份。
+        ///
+        /// 这里原来是一句裸 UPDATE，没有任何防环 —— 把 A 挂到 B 下、再把 B 挂到 A 下，
+        /// 就能造出互为父子的死循环，前端递归渲染会直接爆栈。
+        /// 前端现在走的是 parent2，所以这版没人调用；但它在 RpcCatalog 里是有登记的，
+        /// 将来任何新代码或插件调一下就能把库弄坏。留着两份实现迟早还会走岔，所以让它直接委托。
+        /// </summary>
+        public object NotebookSetParent(string id, string parentId) => NotebookSetParent2(id, parentId);
 
         /* ================= 媒体：分类 / 调色 ================= */
 
@@ -232,7 +236,19 @@ namespace Riqian
             if (!string.IsNullOrWhiteSpace(folder))
             {
                 if (folder == "__none__") sb.Append(" AND IFNULL(folder,'')=''");
-                else { sb.Append(" AND IFNULL(folder,'')=$fd"); ps.Add(("$fd", folder)); }
+                else
+                {
+                    /*
+                     * 第 220 条：点父文件夹要能看到子层的文件（也就是「递归」）。
+                     * 层级用 `/` 分隔，所以条件是「等于它」或者「以 它+斜杠 开头」。
+                     *
+                     * 注意这里必须精确匹配「它 + /」而不只是「以它开头」——
+                     * 否则选中「旅行」会把「旅行照」也带进来（那个是另一层的平名字）。
+                     */
+                    sb.Append(" AND (IFNULL(folder,'')=$fd OR IFNULL(folder,'') LIKE $fdsub)");
+                    ps.Add(("$fd", folder));
+                    ps.Add(("$fdsub", folder + "/%"));
+                }
             }
             // 第 151 条：按标签筛。标签是逗号串，两头补逗号再找，避免「风景」命中「风景照」
             if (!string.IsNullOrWhiteSpace(tag))
@@ -345,13 +361,58 @@ namespace Riqian
             return new { ok = true, n };
         }
 
-        /// <summary>文件夹清单（含「未分类」的计数），给筛选条用</summary>
+        /// <summary>
+        /// 文件夹清单（含「未分类」的计数），给筛选条用。
+        ///
+        /// 第 220 条：用户要「无限嵌套」。以前 folder 是一个平名字符串，
+        /// 现在约定用 `/` 分隔层级（`旅行/2024/京都`），磁盘上的实际文件不动 ——
+        /// 只是索引里多一段路径。这样不用改表结构，老数据（没有 `/`）自动就是第一层。
+        ///
+        /// 返回四项：
+        ///   folder = 完整路径
+        ///   name   = 最后一段（前端显示用）
+        ///   own    = 只属于这一层的文件数（不含子层）
+        ///   n      = 含所有子层的文件数（点进去实际会看到多少）
+        ///   depth  = 层级深度，前端据此缩进
+        /// </summary>
         public object MediaFolders()
         {
-            return Rows(@"SELECT IFNULL(folder,'') AS folder, COUNT(*) AS n
+            var raw = Rows(@"SELECT IFNULL(folder,'') AS folder, COUNT(*) AS n
                          FROM media WHERE deleted_at IS NULL
                          GROUP BY 1 ORDER BY 1")
-                .Select(r => new { folder = Str(r["folder"]), n = Int(r["n"]) }).ToList();
+                .Select(r => new { folder = Str(r["folder"]), n = Int(r["n"]) })
+                .Where(x => x.folder.Length > 0)
+                .ToList();
+
+            // 把沿途的中间层也补出来：有「旅行/2024/京都」就说明「旅行」「旅行/2024」也是文件夹，
+            // 哪怕它们本身一个文件都没直接放。
+            var all = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var x in raw)
+            {
+                var parts = x.folder.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                var acc = "";
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    acc = acc.Length == 0 ? parts[i] : acc + "/" + parts[i];
+                    var isLeaf = i == parts.Length - 1;
+                    all[acc] = (all.TryGetValue(acc, out var c) ? c : 0) + (isLeaf ? x.n : 0);
+                }
+            }
+
+            var own = raw.ToDictionary(x => x.folder, x => x.n, StringComparer.Ordinal);
+            return all.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv =>
+                {
+                    var parts = kv.Key.Split('/');
+                    return new
+                    {
+                        folder = kv.Key,
+                        name = parts[parts.Length - 1],
+                        own = own.TryGetValue(kv.Key, out var o) ? o : 0,
+                        n = kv.Value,
+                        depth = parts.Length - 1,
+                    };
+                }).ToList();
         }
 
         /// <summary>
@@ -375,15 +436,34 @@ namespace Riqian
                 .Select(kv => new { tag = kv.Key, n = kv.Value }).ToList();
         }
 
-        /// <summary>重命名文件夹（第 151 条）：改名不该逼用户一个个挪文件</summary>
+        /// <summary>
+        /// 重命名文件夹（第 151 条）：改名不该逼用户一个个挪文件。
+        /// 第 220 条：有了层级之后，改名要连带整棵子树 —— 只改自己会把子文件夹变成孤儿。
+        /// </summary>
         public object MediaRenameFolder(string from, string to)
         {
-            var a = (from ?? "").Trim();
-            var b = (to ?? "").Trim();
+            var a = (from ?? "").Trim().Trim('/');
+            var b = (to ?? "").Trim().Trim('/');
             if (a.Length == 0) return new { ok = false, n = 0 };
+
+            var n = 0;
+            // 先精确改自己
             Exec("UPDATE media SET folder=$b, updated_at=$u, rev=rev+1 WHERE IFNULL(folder,'')=$a",
                 ("$b", b), ("$u", Now), ("$a", a));
-            return new { ok = true, n = Int(Scalar("SELECT COUNT(*) FROM media WHERE IFNULL(folder,'')=$a AND deleted_at IS NULL", ("$a", b))) };
+            n += Int(Scalar("SELECT COUNT(*) FROM media WHERE IFNULL(folder,'')=$a AND deleted_at IS NULL", ("$a", b)));
+
+            // 再把子层的路径前缀换掉：旅行/2024 → 出行/2024
+            var kids = Rows("SELECT id, IFNULL(folder,'') AS f FROM media WHERE IFNULL(folder,'') LIKE $p AND deleted_at IS NULL",
+                ("$p", a + "/%"));
+            foreach (var k in kids)
+            {
+                var old = Str(k["f"]);
+                var next = b + old.Substring(a.Length);
+                Exec("UPDATE media SET folder=$b, updated_at=$u, rev=rev+1 WHERE id=$i",
+                    ("$b", next), ("$u", Now), ("$i", Str(k["id"])));
+                n++;
+            }
+            return new { ok = true, n };
         }
 
         public object MediaSetTone(string id, string tone)
@@ -733,7 +813,21 @@ namespace Riqian
                     cat = Str(r["cat"]),
                     note = Str(r["note"]),
                     accountId = Str(r["account_id"]),
+                    /* 罐子流水在账本里要显示，但它不是收支 ——
+                       前端得知道这是转账，才能不把它算进"这天花了多少"，
+                       并且给它一个不一样的标记（「存进罐子」而不是「支出」）。 */
+                    jarId = Str(r["jar_id"]),
                 }).ToList();
+
+            /*
+             * 第 97 条：储蓄罐的存入 / 取出也在 ledger 里，但它们**不是收支**。
+             *
+             * 用户把 2000 块放进储蓄罐，钱并没有花掉，只是从左口袋挪到右口袋。
+             * 如果照 kind 记账本合计，这个月「支出」凭空多 2000，预算条立刻告急 —— 那是假的。
+             * 所以所有合计（收入 / 支出 / 分类 / 按天）都排除 jar_id 非空的行，
+             * 而明细列表仍然显示它们（用户在账本里应该看得见这笔钱去哪了）。
+             */
+            const string notJar = " AND IFNULL(jar_id,'')=''";
 
             // 收入 / 支出：一条 SQL
             var sums = Rows($@"SELECT
@@ -741,7 +835,7 @@ namespace Riqian
                     IFNULL(SUM(CASE WHEN kind='out' THEN amount ELSE 0 END),0) AS expense,
                     SUM(CASE WHEN kind='in'  THEN 1 ELSE 0 END) AS in_n,
                     SUM(CASE WHEN kind='out' THEN 1 ELSE 0 END) AS out_n
-                FROM ledger WHERE {w}", a).FirstOrDefault();
+                FROM ledger WHERE {w}{notJar}", a).FirstOrDefault();
             var income = sums == null ? 0 : Double(sums["income"]);
             var expense = sums == null ? 0 : Double(sums["expense"]);
             var inN = sums == null ? 0 : Int(sums["in_n"]);
@@ -751,7 +845,7 @@ namespace Riqian
             var byCat = Rows($@"SELECT IFNULL(NULLIF(cat,''),'未分类') AS cat,
                     IFNULL(SUM(CASE WHEN kind='out' THEN amount ELSE 0 END),0) AS out_sum,
                     IFNULL(SUM(CASE WHEN kind='in'  THEN amount ELSE 0 END),0) AS in_sum
-                FROM ledger WHERE {w}
+                FROM ledger WHERE {w}{notJar}
                 GROUP BY 1 ORDER BY out_sum DESC", a)
                 .Select(r => new
                 {
@@ -761,13 +855,17 @@ namespace Riqian
                 }).ToList();
 
             // 按天小计：一条 SQL，前端直接拿来当每天的抬头
+            /* 注意 days 是**合计口径**：排掉了罐子流水。
+               所以"那天只有存钱/取钱"的日子不会出现在这里 —— 这是对的（合计确实是 0），
+               但前端不能拿它当渲染骨架，否则那些日子的明细永远显示不出来。
+               骨架用下面那个 dayItems。 */
             var days = Rows($@"SELECT date,
                     IFNULL(SUM(CASE WHEN kind='in'  THEN amount ELSE 0 END),0) AS in_sum,
                     IFNULL(SUM(CASE WHEN kind='out' THEN amount ELSE 0 END),0) AS out_sum,
                     SUM(CASE WHEN kind='in'  THEN 1 ELSE 0 END) AS in_n,
                     SUM(CASE WHEN kind='out' THEN 1 ELSE 0 END) AS out_n,
                     COUNT(*) AS n
-                FROM ledger WHERE {w}
+                FROM ledger WHERE {w}{notJar}
                 GROUP BY date ORDER BY date DESC", a)
                 .Select(r => new
                 {
@@ -779,13 +877,24 @@ namespace Riqian
                     n = Int(r["n"]),
                 }).ToList();
 
+            /* 渲染骨架：**明细口径**，不排罐子。
+               凡是 items 里出现过的日期都在这里，前端照这个分组就不会漏。
+               罐子流水那天没有收支小计，所以 sum 全是 0 —— 前端显示时算 0 即可。 */
+            var dayItems = Rows($@"SELECT date, COUNT(*) AS n
+                FROM ledger WHERE {w}
+                GROUP BY date ORDER BY date DESC", a)
+                .Select(r => new { date = Str(r["date"]), n = Int(r["n"]) }).ToList();
+
             // 下拉要用的全部分类，不能受 cat 筛选影响，否则选了就只剩一个
+            /* 但罐子流水的分类（「存钱」）要排掉 —— 那不是用户能选的花销分类，
+               留着会在下拉里永久多出一项，选中后合计恒为 0，看着像坏了。 */
             var allCats = Rows(@"SELECT DISTINCT cat FROM ledger
-                    WHERE date>=$f AND date<=$t AND deleted_at IS NULL AND IFNULL(cat,'')<>''
+                    WHERE date>=$f AND date<=$t AND deleted_at IS NULL
+                      AND IFNULL(jar_id,'')='' AND IFNULL(cat,'')<>''
                     ORDER BY cat", ("$f", from), ("$t", to))
                 .Select(r => Str(r["cat"])).ToList();
 
-            return new { from, to, items, income, expense, balance = income - expense, inN, outN, byCat, days, allCats };
+            return new { from, to, items, income, expense, balance = income - expense, inN, outN, byCat, days, dayItems, allCats };
         }
 
         /// <summary>
@@ -795,13 +904,24 @@ namespace Riqian
         public object LedgerAccounts()
         {
             var from = DateTime.Today.ToString("yyyy-MM-01");
-            return Rows(@"SELECT a.*,
-                    IFNULL((SELECT SUM(CASE WHEN l.kind='in' THEN l.amount ELSE -l.amount END)
+            /*
+             * 第 97 条：账户余额必须**包含**储蓄罐的存取。
+             *
+             * 钱从银行卡挪进储蓄罐，银行卡余额就是少了 —— 这是真的减少了，
+             * 不是"账本口径"的问题。所以 delta 要算上罐子流水，
+             * 但**符号要反过来**（见 Db.AccountDeltaSql 的注释：罐子流水的 kind 是罐子方向）。
+             * 只有 monthIn / monthOut 这两列（账本上显示「本月流入/流出」）
+             * 要排掉储蓄罐，否则用户会看到「本月支出 4000」但实际只花了 2000。
+             */
+            return Rows($@"SELECT a.*,
+                    IFNULL((SELECT {AccountDeltaSql}
                             FROM ledger l WHERE l.account_id=a.id AND l.deleted_at IS NULL), 0) AS delta,
                     IFNULL((SELECT SUM(CASE WHEN l.kind='in' THEN l.amount ELSE 0 END)
-                            FROM ledger l WHERE l.account_id=a.id AND l.deleted_at IS NULL AND l.date>=$f), 0) AS m_in,
+                            FROM ledger l WHERE l.account_id=a.id AND l.deleted_at IS NULL AND l.date>=$f
+                              AND IFNULL(l.jar_id,'')=''), 0) AS m_in,
                     IFNULL((SELECT SUM(CASE WHEN l.kind='out' THEN l.amount ELSE 0 END)
-                            FROM ledger l WHERE l.account_id=a.id AND l.deleted_at IS NULL AND l.date>=$f), 0) AS m_out
+                            FROM ledger l WHERE l.account_id=a.id AND l.deleted_at IS NULL AND l.date>=$f
+                              AND IFNULL(l.jar_id,'')=''), 0) AS m_out
                 FROM accounts a WHERE a.deleted_at IS NULL ORDER BY a.sort, a.created_at",
                 ("$f", from))
                 .Select(r => new

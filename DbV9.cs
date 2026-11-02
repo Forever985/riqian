@@ -114,13 +114,34 @@ namespace Riqian
         /// <summary>
         /// 参考「番茄 todo」的统计口径：总量、连续天数、时段分布、任务排行、逐日热力。
         /// 只做能算准的，不编「效率评分」这种没有依据的东西。
+        ///
+        /// 第 131 条：统计页要把这块嵌进去复用。但统计页的区间是
+        /// 「近 7 天 / 近 30 天 / 今年 / 去年 / 自定义」这一套，
+        /// 光有 days 表达不了「去年」和「自定义」—— 传 days 只能算"从今天往前推"。
+        /// 所以加一对可选的起止日期：给了就按它，没给就还是按 days 从今天往前推，
+        /// 番茄钟页那边的老调用一行都不用改。
         /// </summary>
-        public object PomoInsight(int days)
+        public object PomoInsight(int days, string fromIn = null, string toIn = null)
         {
             if (days <= 0) days = 30;
             if (days > 365) days = 365;
-            var to = Today;
-            var from = DateTime.Now.AddDays(-(days - 1)).ToString("yyyy-MM-dd");
+
+            string to, from;
+            if (!string.IsNullOrWhiteSpace(fromIn) && fromIn.Length >= 10)
+            {
+                /* 自定义区间。两个方向都要夹住，否则「去年」查出来 spans 三年，
+                   热力图的列数会爆炸（它是按天铺格子的）。 */
+                from = fromIn.Substring(0, 10);
+                to = !string.IsNullOrWhiteSpace(toIn) && toIn.Length >= 10 ? toIn.Substring(0, 10) : Today;
+                if (string.CompareOrdinal(to, from) < 0) { var t0 = to; to = from; from = t0; }
+                if ((DateTime.Parse(to) - DateTime.Parse(from)).TotalDays > 366)
+                    from = DateTime.Parse(to).AddDays(-366).ToString("yyyy-MM-dd");
+            }
+            else
+            {
+                to = Today;
+                from = DateTime.Now.AddDays(-(days - 1)).ToString("yyyy-MM-dd");
+            }
 
             var rows = Rows(@"SELECT date,ts,minutes,kind,task FROM pomodoro
                               WHERE date>=$f AND date<=$t ORDER BY date, ts", ("$f", from), ("$t", to))

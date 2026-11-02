@@ -292,6 +292,21 @@ export function TraySection() {
             }}
           />
         </Row>
+        {/* 第 75 条：锁上之后托盘图标要能看出来 */}
+        <Row
+          label="锁定后图标带小锁"
+          sub="锁上时在托盘图标右下角叠一个红色小锁，解开就恢复；离开工位瞟一眼就知道状态"
+          kw="托盘 小锁 锁定 图标 状态"
+        >
+          <Switch
+            on={String(settings.trayLockIcon ?? '1') === '1'}
+            onClick={async () => {
+              const next = String(settings.trayLockIcon ?? '1') === '1' ? '0' : '1';
+              await setSetting('trayLockIcon', next);
+              await api.shell.lockState(useStore.getState().appLocked ? 1 : 0);
+            }}
+          />
+        </Row>
       </div>
 
       <div className="card">

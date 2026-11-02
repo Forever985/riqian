@@ -47,8 +47,46 @@ namespace Riqian
             var text = LoadHtml();
             // 带 BOM 会让某些解析路径上的首字符出问题，统一按无 BOM 写
             File.WriteAllText(html, text, new UTF8Encoding(false));
+
+            WriteFonts(dir);
             return dir;
         }
+
+        /// <summary>
+        /// 把 KaTeX 的 20 个 .woff2 字体落到 <c>ui/fonts/</c>。
+        ///
+        /// 以前这些字体是 base64 内嵌在 CSS 里的（346 KB，占整个 index.html 的 20%），
+        /// 而字体字节几乎不可压缩 —— 实测它把整包的 gzip 率拖坏了（含字体 284 KB
+        /// vs 不含字体 27 KB）。外置成真实文件后 index.html 从 1755 KB 降到 1428 KB。
+        ///
+        /// 落盘策略：只写不存在或大小不同的。字体是纯静态内容、永不变化，
+        /// 每次启动重写 304 KB 纯属浪费磁盘 I/O；而大小不同就说明换了 KaTeX 版本，
+        /// 那时必须覆盖。比哈希便宜，也够用。
+        /// </summary>
+        private static void WriteFonts(string dir)
+        {
+            var fontDir = Path.Combine(dir, "fonts");
+            Directory.CreateDirectory(fontDir);
+
+            var asm = Assembly.GetExecutingAssembly();
+            foreach (var name in asm.GetManifestResourceNames())
+            {
+                // 资源名形如 Riqian.fonts.KaTeX_AMS-Regular.woff2
+                if (!name.StartsWith(FontPrefix, StringComparison.Ordinal)) continue;
+                if (!name.EndsWith(".woff2", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var file = Path.Combine(fontDir, name.Substring(FontPrefix.Length));
+                using var s = asm.GetManifestResourceStream(name);
+                if (s == null) continue;
+                if (File.Exists(file) && new FileInfo(file).Length == s.Length) continue;
+
+                using var f = File.Create(file);
+                s.CopyTo(f);
+            }
+        }
+
+        /// <summary>字体内嵌资源的名字前缀（见 Riqian.csproj 的 EmbeddedResource）</summary>
+        private const string FontPrefix = "Riqian.fonts.";
 
         /// <summary>
         /// 取界面 HTML：优先用 exe 旁边的 wwwroot（开发时热替换），否则读内嵌资源。

@@ -10,6 +10,25 @@
   --glass:color-mix(in srgb, var(--panel) 74%, transparent);
   --hover:color-mix(in srgb, var(--ink) 7%, transparent);
   /*
+   * 第 84b / 87 条：可点击性令牌。
+   *
+   * 用户原话：「每一个设置项，我点上去之后，确实有不同的亮度和颜色，
+   * 但是不点上去我也应该要知道那里可以点上去。」
+   *
+   * 原来的毛病是「只有 hover 没有静止态」：.nav button / .snav / .brand 全是
+   * background:transparent + border:0，静止时跟一段普通文字没区别，
+   * 鼠标扫上去才突然发光 —— 这是"猜得到"而不是"看得出来"。
+   *
+   * 三个层级，按元素在界面里的分量选用，不要一把全上：
+   *   --tap     行级可点（导航项、设置子导航）：极淡底色 + 1px 边，静止即可辨认
+   *   --tap-hi  hover 时加深，比静止态明确跳一档
+   *   --tap-ed  边界色，比 --line 稍深，保证浅色主题下也看得见
+   * 全部由 --ink / --line 混出来，所以 8 套主题自动跟着变，不用逐个主题写。
+   */
+  --tap:color-mix(in srgb, var(--ink) 3.2%, transparent);
+  --tap-hi:color-mix(in srgb, var(--ink) 8%, transparent);
+  --tap-ed:color-mix(in srgb, var(--ink) 11%, transparent);
+  /*
    * 第 222 条：鼠标指针可换。
    * 三个槽位 —— 普通箭头 / 可点的手 / 文本输入的光标。
    * 默认值就是系统那三枚（auto / pointer / text），等于没换。
@@ -116,6 +135,15 @@ body{
 }
 button{font-family:inherit;font-size:inherit;cursor:pointer;color:inherit}
 input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+/* 第 87 条：裸 <select>（没挂 .inp 的那些，散在诊断面板 / 字体选择 / 闹钟 / 账本里）
+   在 Windows 上会退化成系统默认外观 —— 有时连边框都没有，看着像一段带箭头的文字。
+   给一个兜底外观：挂了 .inp 的会被后面的 .inp 规则覆盖，不受影响。 */
+select:not(.inp){
+  border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  padding:5px 8px;cursor:pointer;transition:border-color .14s;
+}
+select:not(.inp):hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+select:not(.inp):focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:1px}
 input[type=range]{accent-color:var(--accent)}
 a{color:var(--accent)}
 h1,h2,h3,h4{margin:0;font-weight:600}
@@ -179,13 +207,25 @@ h1,h2,h3,h4{margin:0;font-weight:600}
 .app.nav-collapsed .side-foot{display:none}
 .app.nav-collapsed .side{padding:16px 8px}
 .app.nav-collapsed .nav button{justify-content:center}
-.app.nav-collapsed .brand{justify-content:center;padding:0 0 14px}
+/* 折叠态只留图标。padding 跟着第 184 行的改法走：
+   原来的 `0 0 14px` 同样把间距当成了内边距，底色会塌成一条。 */
+.app.nav-collapsed .brand{justify-content:center;padding:7px 0;margin-bottom:7px}
 
 .brand{
-  display:flex;align-items:center;gap:9px;padding:0 8px 16px;white-space:nowrap;
+  display:flex;align-items:center;gap:9px;padding:7px 8px;margin-bottom:9px;white-space:nowrap;
   background:none;border:0;width:100%;text-align:left;color:inherit;font:inherit;
   cursor:pointer;border-radius:10px;
 }
+/* 第 87 条：这个 LOGO 是可点的（回首页，id="brand-home"），
+   但原来唯一的反馈是 hover 时里面的"签"字方块转 4 度 —— 太隐晦了，
+   绝大多数人不会发现它能点。
+ *
+ * 注意 padding 的拆法：原来是 `0 8px 16px`，那 16px 是"和下面导航拉开距离"，
+ * 不是按钮自己的内边距。直接背景色会连这段空白一起染上，看着像一块糊住的长条。
+ * 所以改成 `7px 8px` 的内边距 + margin-bottom 承担间距，
+ * 底色正好落在手指能点的那一块上。 */
+.brand{border-radius:10px;transition:background .14s;background:var(--tap)}
+.brand:hover{background:var(--tap-hi)}
 .brand:hover .mark{transform:rotate(-4deg) scale(1.04)}
 .brand .mark{
   width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));
@@ -204,8 +244,27 @@ h1,h2,h3,h4{margin:0;font-weight:600}
   padding:7px 10px;border-radius:calc(var(--r) - 5px);color:var(--ink2);font-size:14.5px;transition:.13s;
   flex:0 0 auto;
 }
-.nav button:hover{background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--ink)}
-.nav button.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+/* 第 84b 条：静止态就得看得出是"一行能点的地方"。
+   原来是 background:transparent + 无边框，整排导航静止时跟纯文本一样，
+   只有鼠标扫上去才变色 —— 用户的原话是"不点上去我也应该知道那里可以点"。
+   这里给极淡底色，不给边框：22 个导航项全描边会像一堆输入框，
+   底色 + 悬停加深已经足够表达"这一整行是一个目标"。 */
+.nav button{
+  background:var(--tap);
+  box-shadow:inset 0 0 0 1px var(--tap-ed);
+}
+.nav button:hover{background:var(--tap-hi);color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 42%,transparent)}
+/* 选中态必须压过上面的 --tap 底色，否则"当前在哪一页"就跟未选项糊在一起。
+   用 panel 实底 + 阴影浮起 + 主色左边条，三重区分。 */
+.nav button.on{
+  background:var(--panel);color:var(--ink);font-weight:600;
+  box-shadow:var(--shadow),inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent);
+}
+.nav button.on::before{
+  content:'';position:absolute;left:2px;top:50%;transform:translateY(-50%);
+  width:3px;height:15px;border-radius:2px;background:var(--accent);
+}
+.nav button{position:relative}
 .nav button .ic{width:18px;text-align:center;font-size:14px;opacity:.85;flex:0 0 auto}
 .nav button .lb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav button .badge{
@@ -259,8 +318,18 @@ h1,h2,h3,h4{margin:0;font-weight:600}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:var(--accent2);border-color:var(--accent2);color:#fff}
-.btn.ghost{background:transparent;border-color:transparent;color:var(--ink2)}
-.btn.ghost:hover{background:var(--panel2);color:var(--ink)}
+/* 第 87 条 —— 用户点名的那一个：
+   「在"联系我们"中，"用模板"这个按钮没有体现出是个按钮。」
+   根因就是这一行的 border-color:transparent：ghost 本意是"次要操作"，
+   但把边框也抹掉之后，它连"按钮"这个身份都没了，看着就是一句普通文字。
+   ghost 该有的是"弱"，不是"看不见" —— 保留无实心背景，
+   补一层比 --line 更淡的轮廓，让它够低调但仍是个按钮。
+   全站 118 处 ghost 都会跟着修好，不用一处处改 TSX。 */
+.btn.ghost{
+  background:transparent;color:var(--ink2);
+  border-color:color-mix(in srgb,var(--ink) 8%,transparent);
+}
+.btn.ghost:hover{background:var(--tap-hi);color:var(--ink);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .btn.sm{padding:4px 9px;font-size:12.5px;border-radius:7px}
 .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
 .btn.danger:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
@@ -1274,7 +1343,21 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
   box-shadow:0 8px 28px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.08);
   padding:4px;display:flex;flex-direction:column;gap:1px;
   animation:ctxIn .11s ease-out;
+  /*
+   * 第 235 条：菜单项可以很多（待办那条有 19 项），而窗口可能只有 736px 高。
+   * 实测过：19 项的菜单 743px，比视口还高 —— 底部的「删除」被挤出屏幕，
+   * 鼠标根本够不到。
+   *
+   * 不能用百分比：max-height:calc(100% - 24px) 在 position:fixed 上算不出像素
+   * （fixed 元素的包含块不是视口高度），实测 computed 值原样停在 calc(...)，
+   * 等于没写。必须用视口单位 dvh，这个才是真能算出数的。
+   * 减 24px 给上下各留 12px 边距。
+   */
+  max-height:calc(100dvh - 24px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
 }
+/* 菜单自己的滚动条别用默认那种粗的 */
+.ctxmenu::-webkit-scrollbar{width:8px}
+.ctxmenu::-webkit-scrollbar-thumb{border-width:2px}
 @keyframes ctxIn{from{opacity:0;transform:translateY(-3px) scale(.985)}to{opacity:1;transform:none}}
 .ctx-item{
   display:flex;align-items:center;gap:10px;width:100%;text-align:left;
@@ -1371,12 +1454,16 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 }
 .snav{
   display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:0;
-  background:transparent;color:var(--ink2);font-size:13.5px;cursor:pointer;text-align:left;
+  background:var(--tap);color:var(--ink2);font-size:13.5px;cursor:pointer;text-align:left;
   width:100%;min-width:0;
+  /* 第 84b 条：设置页左侧这 12 项同样是"只有 hover 才发光"，
+     静止时是一串纯文字。跟主导航保持同一套可点性语言。 */
+  box-shadow:inset 0 0 0 1px var(--tap-ed);
+  transition:.13s;
 }
 .snav > span:not(.hit){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.snav:hover{background:var(--panel2);color:var(--ink)}
-.snav.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+.snav:hover{background:var(--tap-hi);color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 42%,transparent)}
+.snav.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--shadow),inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
 .snav .hit{width:5px;height:5px;border-radius:50%;background:var(--accent);margin-left:auto}
 .setbody{display:flex;flex-direction:column;gap:14px;min-width:0}
 .set-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed var(--line2);flex-wrap:wrap}
@@ -1920,7 +2007,17 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 /* 87：所有"能点"的东西都要看得出来能点 */
 .chip:not(.on):hover{border-color:var(--accent);color:var(--ink)}
 .btn.ghost:hover{background:var(--panel2);border-color:var(--line)}
-.set-row:hover{background:color-mix(in srgb,var(--accent) 3.5%,transparent);border-radius:9px}
+/* 第 87 条「举一反三」的中招点：这里原本有一整行 hover 变色。
+ *
+ * 但 .set-row 是个 <div> 容器（见 components/SetRow.tsx），它本身点不动 ——
+ * 真正能点的是行里的 switch / chip / select / 按钮。
+ * 于是鼠标划过来整行都亮，用户以为「点哪里都行」，实际点到说明文字上什么也不会发生。
+ * 这比"看不出来能点"更糟：是明确的错误暗示。
+ *
+ * 处理方式：保留一点点 hover 反馈（行是阅读单元，顺着看下来需要定位感），
+ * 但弱化到不足以被当成"可点"，同时给行内真实控件一个明确的静止态。
+ * 更强的那一档留给 [data-hit]（设置搜索命中），别让两种含义混用同一种视觉。 */
+.set-row:hover{background:color-mix(in srgb,var(--ink) 1.6%,transparent);border-radius:9px}
 .rec-title:hover{text-decoration:underline;text-underline-offset:3px}
 .nav button{cursor:pointer}
 .mrow:hover{background:var(--panel2)}
@@ -3408,6 +3505,11 @@ html[data-appbg] :is(.dnav, .nbook, .nrow, .rail-item, .snav, .mod-tools button,
 @media (max-width:760px){
   .stats-cell.span-2{grid-column:span 6}
 }
+/* 第 12 条：统计页顶部的自定义时间区间条 */
+.stats-range{padding:12px 16px;margin-bottom:16px}
+.stats-range .row{flex-wrap:wrap;gap:8px}
+.stats-range .seg{flex-wrap:wrap}
+.stats-range b{color:var(--ink2);font-weight:600}
 .stats-grip{
   position:absolute;top:6px;right:8px;z-index:6;cursor:grab;font-size:13px;color:var(--ink3);
   line-height:1;padding:3px 5px;border-radius:6px;background:color-mix(in srgb,var(--panel) 88%,transparent);
@@ -3484,3 +3586,26 @@ html[data-appbg] :is(.dnav, .nbook, .nrow, .rail-item, .snav, .mod-tools button,
 .db-color-cur i{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
 /* 调色板那一组要 relative，拾色面板才定位得对 */
 .db-grp.pick{position:relative}
+
+/* ---------- 第 75 条：顶栏那把「小锁」 ---------- */
+/*
+ * 用户原话：「可以搞个小锁 icon 或者 Logo 什么的。这个在设置里面也要做好，托盘里面也要」。
+ *
+ * 之前锁只在「导航右键」和「设置 → 当前加锁范围」两个地方能看到，
+ * 用户进到某一页本身是没法判断「这一页到底锁没锁」的。现在顶栏常驻一把：
+ *   · 没锁 → 半透明，跟其它 ghost 按钮一致，不抢注意力
+ *   · 锁着 → 强调色 + 淡底，一眼能看出来这页要密码
+ */
+.topbar .topbar-lock{
+  flex:0 0 auto;opacity:.55;color:var(--ink3);transition:opacity .15s,color .15s,background .15s;
+}
+.topbar .topbar-lock:hover{opacity:1;color:var(--ink)}
+.topbar .topbar-lock.on{
+  opacity:1;color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 12%,transparent);
+}
+.topbar .topbar-lock .lb{font-size:11.5px}
+/* 窄窗口下文字收掉，只留图标 —— 顶栏本来就挤，别让锁把标题挤没 */
+@media (max-width:900px){
+  .topbar .topbar-lock .lb{display:none}
+}

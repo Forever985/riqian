@@ -10,7 +10,7 @@ import { SortBar, type SortDir, type SortOption } from '../components/SortBar';
 import { useDragSort } from '../components/DragSort';
 import {
   Highlight, MoveNoteDialog, NewNoteDialog, NotebookDialog,
-  NOTE_COLORS, parseTags, snippet, stripHtml,
+  NOTE_COLORS, NoteDot, NoteMarkPicker, parseTags, snippet, stripHtml,
 } from '../features/notes';
 import type { NoteRow, Notebook } from '../types';
 
@@ -19,20 +19,24 @@ import type { NoteRow, Notebook } from '../types';
  * 之前的写法是「按更新时间」这种把方向焊死在维度里的标签 ——
  * 于是永远只有一个方向，用户想倒着看办不到。
  */
-type SortKey = 'updated' | 'name' | 'chars' | 'manual';
+type SortKey = 'updated' | 'created' | 'name' | 'chars' | 'manual';
 
 const NOTE_SORTS: SortOption<SortKey>[] = [
   { v: 'updated', n: '更新时间', tip: '最近改过的排前面' },
+  /* 第 90b 条：创建时间是另一件事 ——「最近改过的」会把老笔记顶上来，想找新建的得靠它 */
+  { v: 'created', n: '创建时间', tip: '按写下来的那天排' },
   { v: 'name', n: '名称', tip: '按标题认字排，认拼音' },
-  { v: 'chars', n: '字数', tip: '写得多排前面' },
+  /* 第 90b 条：这一项就是用户说的「按大小排序」。字数用去空格后的数，和卡片上显示的「N 字」一致 */
+  { v: 'chars', n: '篇幅', tip: '按字数（大小）排，长文在前' },
   /* 第 230 条：手动顺序是自己拖出来的，没有升降之说 */
   { v: 'manual', n: '手动', tip: '自己拖出来的顺序', dir: false },
 ];
 
 const SORT_LABEL: Record<SortKey, string> = {
   updated: '更新时间',
+  created: '创建时间',
   name: '名称',
-  chars: '字数',
+  chars: '篇幅',
   manual: '手动',
 };
 
@@ -57,7 +61,7 @@ export function NotesView() {
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
   const rawSort = String(settings?.noteSort || 'updated');
-  const sort: SortKey = (['updated', 'name', 'chars', 'manual'] as const).includes(rawSort as SortKey)
+  const sort: SortKey = (['updated', 'created', 'name', 'chars', 'manual'] as const).includes(rawSort as SortKey)
     ? (rawSort as SortKey) : 'updated';
   const rawDir = String(settings?.noteSortDir || 'desc');
   const dir: SortDir = rawDir === 'asc' ? 'asc' : 'desc';
@@ -76,6 +80,10 @@ export function NotesView() {
   const [body, setBody] = useState('');
   const [pinned, setPinned] = useState(0);
   const [noteBook, setNoteBook] = useState('');
+  /* 第 128 条：这篇笔记自己的色点 / 图标；空串 = 跟随笔记本 */
+  const [noteColor, setNoteColor] = useState('');
+  const [noteIcon, setNoteIcon] = useState('');
+  const [markPick, setMarkPick] = useState<string | null>(null);   // 正在改哪一篇的标识
   const [editorTags, setEditorTags] = useState<string[]>([]);
   /*
    * 加了锁的笔记，列表里**不能**再露正文摘要和标签。
@@ -151,6 +159,7 @@ export function NotesView() {
 
     if (!activeNoteId) {
       setTitle(''); setBody(''); setPinned(0); setNoteBook(''); setEditorTags([]);
+      setNoteColor(''); setNoteIcon('');
       titleRef.current = ''; bookRef.current = ''; pinRef.current = 0;
       return;
     }
@@ -161,6 +170,8 @@ export function NotesView() {
       setBody(n.body);
       setPinned(n.pinned);
       setNoteBook(n.notebookId);
+      setNoteColor(n.color || '');
+      setNoteIcon(n.icon || '');
       titleRef.current = n.title;
       bookRef.current = n.notebookId;
       pinRef.current = n.pinned;
@@ -247,7 +258,39 @@ export function NotesView() {
       title: patch.title ?? d.title,
       body: d.body || '',
       pinned: patch.pinned ?? d.pinned,
+      /*
+       * 第 128 条：这里必须显式把 color / icon 一起写回去。
+       * 不传（undefined）后端当「别动」，于是「只改标题」看起来没问题 ——
+       * 但复制 / 移动这类操作走的是同一条路，不带上就等于把标识丢了。
+       */
+      color: d.color || '',
+      icon: d.icon || '',
     });
+  };
+
+  /**
+   * 第 128 条：改单篇笔记的色点 / 图标。
+   *
+   * 不进 saveDetail 的原因：那条路要先 notes.get 再全量写，
+   * 而这里用户正在编辑器里打字、正文可能比库里新 —— 走全量会把
+   * 未落盘的输入换成库里的旧正文。所以这里只发 color / icon 两个字段。
+   */
+  const setMark = async (id: string, patch: { color?: string; icon?: string }) => {
+    const d = await api.notes.get(id);
+    await api.notes.save({
+      id,
+      notebookId: d.notebookId,
+      title: d.title,
+      body: id === activeNoteId ? body : (d.body || ''),
+      pinned: d.pinned,
+      ...(patch.color !== undefined ? { color: patch.color } : {}),
+      ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
+    });
+    if (id === activeNoteId) {
+      if (patch.color !== undefined) setNoteColor(patch.color);
+      if (patch.icon !== undefined) setNoteIcon(patch.icon);
+    }
+    await loadRows();
   };
 
   const rename = async (r: NoteRow) => {
@@ -345,6 +388,15 @@ export function NotesView() {
         return mul * x.localeCompare(y, 'zh');
       }
       if (sort === 'chars') return mul * ((a.chars || 0) - (b.chars || 0));
+      /* 第 90b 条：创建时间，老库这列可能为空，空的垫底 */
+      if (sort === 'created') {
+        const x0 = a.createdAt || '';
+        const y0 = b.createdAt || '';
+        if (!x0 && !y0) return 0;
+        if (!x0) return 1;
+        if (!y0) return -1;
+        return mul * x0.localeCompare(y0);
+      }
       /* 更新时间：ISO 字符串比大小就是时间比大小 */
       const x = a.updatedAt || '';
       const y = b.updatedAt || '';
@@ -418,58 +470,134 @@ export function NotesView() {
   };
 
   /**
-   * 递归铺笔记本树（第 220 条）。
+   * 第 230 条：把树**铺平**成一维，才能挂拖动排序。
    *
-   * 层级没有上限，所以不能用「map 一层再 map 一层」那种写法。
-   * 缩进跟着层数走，但封顶在 6 层 —— 再往右缩名字就没了，
-   * 那时候不是「嵌套得深」，是「看不清了」，不如就此打住。
+   * 之前这里是递归 `map` 渲染嵌套 `<div>` —— 视觉上是对的，但结构上是一棵树，
+   * 拿不到「当前视图里第 N 个是谁」这个线性顺序，`useDragSort` 也就无从下手。
+   * 铺平之后：深度带出来自己做缩进，顺序由这个数组决定，拖动就是数组换位。
+   *
+   * 折叠的子树不进去 —— 看不见的东西不该参与排序。
    */
-  const renderBooks = (parentId: string, depth: number): React.ReactNode => {
-    if (depth > 6) return null;
-    const list = parentId
-      ? kidsOf(parentId)
-      : roots;
-    return list.map((b) => {
-      const kids = kidsOf(b.id);
-      const open = !folded.includes(b.id);
-      const pad = 9 + depth * 12;
-      return (
-        <div key={b.id}>
-          <div className="nbookrow">
-            <button
-              className={`nbook ${nb === b.id ? 'on' : ''}`}
-              style={{ paddingLeft: pad, fontSize: depth ? 12.5 : undefined }}
-              title={kids.length ? '点名字看这一层的笔记，点箭头展开下一层' : '点名字看这个笔记本里的笔记'}
-              onClick={() => setNb(b.id)}
-            >
-              {kids.length ? (
-                <span
-                  style={{ flex: '0 0 12px', textAlign: 'center', color: 'var(--ink3)', fontSize: 10 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setFolded(open ? [...folded, b.id] : folded.filter((x) => x !== b.id));
-                  }}
-                >{open ? '▾' : '▸'}</span>
-              ) : (
-                <span style={{ flex: '0 0 12px' }} />
-              )}
-              <span className="dot" style={{ background: b.color, width: depth ? 6 : 8, height: depth ? 6 : 8 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
-              {/* 第 32 条：加过密码的笔记本标一把小锁，不然「点进去要密码」会让人懵 */}
-              {vaultRules.some((r) => r.scope === 'notebook' && r.target === b.id) ? (
-                <span style={{ flex: '0 0 auto', color: 'var(--ink3)', opacity: 0.8 }} title="这个笔记本加过密码">
-                  <Icon name="lock" size={10} />
-                </span>
-              ) : null}
-              <span className="n">{deepCount(b.id)}</span>
-            </button>
-            <button className="nbookmenu" title="笔记本设置" onClick={() => setBookEdit(b)}>⋯</button>
-          </div>
-          {open ? renderBooks(b.id, depth + 1) : null}
-        </div>
-      );
+  const flatBooks = useMemo(() => {
+    const out: { b: Notebook; depth: number }[] = [];
+    const walk = (parentId: string, depth: number) => {
+      if (depth > 6) return;
+      for (const b of (parentId ? kidsOf(parentId) : roots)) {
+        out.push({ b, depth });
+        if (!folded.includes(b.id)) walk(b.id, depth + 1);
+      }
+    };
+    walk('', 0);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [books, folded]);
+
+  /** 第 230 条：同一组的兄弟之间重排，一条语句写完 */
+  const reorderBooks = async (ids: string[]) => {
+    if (ids.length < 2) return;
+    setBooks((prev) => {
+      const pos = new Map(ids.map((id, k) => [id, k * 10]));
+      return prev.map((b) => (pos.has(b.id) ? { ...b, sort: pos.get(b.id) as number } : b));
     });
+    try {
+      await api.notebooks.reorder(ids);
+    } catch {
+      toast('顺序没存上');
+    }
+    await loadBooks();
   };
+
+  /**
+   * 笔记本拖动（第 230 条）。
+   *
+   * 两种落点要分开处理：
+   *   · 落在同一层 → 换位置（reorder）
+   *   · 落在别的层 → 改上级（setParent），落完再排一次让它停在松手的那个位置
+   * 后者的防环交给后端 —— 拖进自己的子孙里会被拒，这里只负责把错说出来。
+   */
+  const bookDrag = useDragSort({
+    keys: flatBooks.map((x) => x.b.id),
+    groupOf: (k) => books.find((b) => b.id === k)?.parentId || '',
+    onReorder: async (from, to) => {
+      const ids = flatBooks.map((x) => x.b.id);
+      if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return;
+      const g = books.find((b) => b.id === ids[from])?.parentId || '';
+      /* 只在本层里换：跨层的那半截交给 onMoveTo，走不到这里 */
+      const sibs = ids.filter((id) => (books.find((b) => b.id === id)?.parentId || '') === g);
+      const a = sibs.indexOf(ids[from]);
+      const z = sibs.indexOf(ids[to]);
+      if (a < 0 || z < 0 || a === z) return;
+      sibs.splice(z, 0, sibs.splice(a, 1)[0]);
+      await reorderBooks(sibs);
+    },
+    onMoveTo: async (f, t) => {
+      if (f.group === t.group) {
+        /* 同层拖动走上面那条，这里兜一下（groupOf 取不到时会是空串） */
+        const ids = flatBooks
+          .filter((x) => (x.b.parentId || '') === f.group)
+          .map((x) => x.b.id);
+        const a = ids.indexOf(f.key);
+        const z = ids.indexOf(t.key);
+        if (a < 0 || z < 0 || a === z) return;
+        ids.splice(z, 0, ids.splice(a, 1)[0]);
+        await reorderBooks(ids);
+        return;
+      }
+      const r = await api.notebooks.setParent(f.key, t.group);
+      if (!r?.ok) { toast(r?.err || '拖不过去'); return; }
+      /* 落进去之后在目标层再排一次，否则它会按名字插到某个说不清的位置 */
+      const sib = kidsOf(t.group).map((b) => b.id).filter((id) => id !== f.key);
+      const at = sib.indexOf(t.key);
+      sib.splice(at < 0 ? sib.length : at, 0, f.key);
+      await reorderBooks(sib);
+      toast(f.group ? '已换到这一层' : '已移到最上层');
+    },
+  });
+
+  const renderBooks = (): React.ReactNode => flatBooks.map(({ b, depth }, i) => {
+    const kids = kidsOf(b.id);
+    const open = !folded.includes(b.id);
+    const pad = 9 + depth * 12;
+    const dp = bookDrag.props(i);
+    return (
+      <div
+        key={b.id}
+        {...dp}
+        className={`nbookrow ${dp.className}`}
+        /* 第 230 条：缩进靠这里给，不再靠嵌套 div —— 嵌套会让拖动算位置算错 */
+        style={{ paddingLeft: depth ? depth * 2 : 0 }}
+      >
+        <button
+          className={`nbook ${nb === b.id ? 'on' : ''}`}
+          style={{ paddingLeft: pad, fontSize: depth ? 12.5 : undefined }}
+          title={kids.length ? '点名字看这一层的笔记，点箭头展开下一层；按住能拖到别的层' : '点名字看这个笔记本里的笔记；按住能拖到别的层'}
+          onClick={() => setNb(b.id)}
+        >
+          {kids.length ? (
+            <span
+              style={{ flex: '0 0 12px', textAlign: 'center', color: 'var(--ink3)', fontSize: 10 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFolded(open ? [...folded, b.id] : folded.filter((x) => x !== b.id));
+              }}
+            >{open ? '▾' : '▸'}</span>
+          ) : (
+            <span style={{ flex: '0 0 12px' }} />
+          )}
+          <span className="dot" style={{ background: b.color, width: depth ? 6 : 8, height: depth ? 6 : 8 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+          {/* 第 32 条：加过密码的笔记本标一把小锁，不然「点进去要密码」会让人懵 */}
+          {vaultRules.some((r) => r.scope === 'notebook' && r.target === b.id) ? (
+            <span style={{ flex: '0 0 auto', color: 'var(--ink3)', opacity: 0.8 }} title="这个笔记本加过密码">
+              <Icon name="lock" size={10} />
+            </span>
+          ) : null}
+          <span className="n">{deepCount(b.id)}</span>
+        </button>
+        <button className="nbookmenu" title="笔记本设置" onClick={() => setBookEdit(b)}>⋯</button>
+      </div>
+    );
+  });
 
   const addBook = async () => {
     const v = await askText('新建笔记本 / 分组', '', '例如：读书摘录');
@@ -543,19 +671,19 @@ export function NotesView() {
               <span className="n">{rows.length}</span>
             </button>
 
-            {/*
-              第 220 条：以前这里是「顶层 map 一层 + 里面再 map 一层」，写死两层。
-              现在改成递归渲染：一层一层往下降，想套多深就套多深。
-              缩进按层数算（每层 12px），到第三层就往右拐不下了，所以封顶 6 层的样子：
-              再深的话缩进会把名字挤没，那时候用户自己也看不清了。
-            */
-            renderBooks('', 0)}
+            {/* 第 230 条：树改成一维铺平再渲染 —— 一维才挂得上拖动排序。
+                缩进由 depth 算，封顶 6 层（再深缩进把名字挤没了）。
+                ref 挂在外层，FLIP 才能量到每一项的位置。
+                display:contents 是为了不破坏 .nbooks 的 flex 间距。 */}
+            <div ref={bookDrag.boxRef} style={{ display: 'contents' }}>
+              {renderBooks()}
+            </div>
 
             <button className="nbook ghost" onClick={() => void addBook()}>
               <Icon name="plus" size={13} /><span>新建笔记本</span>
             </button>
             <div className="small muted" style={{ padding: '2px 9px', fontSize: 11, lineHeight: 1.6 }}>
-              可以一层层往下嵌套。点 ⋯ 能改名、调颜色、换上级、往下新建。
+              可以一层层往下嵌套，也能直接把它拖进别的笔记本里。点 ⋯ 能改名、调颜色、换上级。
             </div>
           </div>
 
@@ -629,6 +757,16 @@ export function NotesView() {
                   onContextMenu={(e) => { e.preventDefault(); setMenuFor(menuFor === r.id ? null : r.id); }}
                 >
                   <div className="nrow-h">
+                    {/* 第 128 条：自己的色点 / 图标放最前，一眼分辨同本里的笔记 */}
+                    <NoteDot
+                      color={r.color || books.find((b) => b.id === r.notebookId)?.color || ''}
+                      inherited={!r.color}
+                      title={r.color ? '这篇自己的颜色' : '跟随笔记本颜色'}
+                      onClick={(e) => { e.stopPropagation(); setMenuFor(null); setMarkPick(markPick === r.id ? null : r.id); }}
+                    />
+                    {r.icon ? <span style={{ flex: '0 0 auto', color: 'var(--ink3)', display: 'inline-flex' }}>
+                      <Icon name={r.icon as never} size={11} />
+                    </span> : null}
                     {r.pinned ? <Icon name="pin" size={11} /> : null}
                     {locked ? <Icon name="lock" size={11} /> : null}
                     <span className="nt"><Highlight text={r.title || '未命名'} kw={kw} /></span>
@@ -668,10 +806,32 @@ export function NotesView() {
                       <button onClick={() => { setMenuFor(null); void duplicate(r); }}>复制</button>
                       <button onClick={() => { setMenuFor(null); void copyLink(r); }}>复制链接</button>
                       <button onClick={() => { setMenuFor(null); void togglePin(r); }}>{r.pinned ? '取消置顶' : '置顶'}</button>
+                      {/* 第 128 条：颜色 / 图标 */}
+                      <button onClick={() => { setMenuFor(null); setMarkPick(r.id); }}>颜色与图标</button>
+                      {/* 第 42 条：钉到桌面当便签，一直看得见 */}
+                      <button
+                        onClick={async () => {
+                          setMenuFor(null);
+                          const x = await api.sticky.open(r.id).catch(() => null);
+                          if (x?.ok) toast(x.already ? '这张便签已经在桌面上了' : '已钉到桌面');
+                          else toast(x?.err || '钉不上，稍后再试');
+                        }}
+                      >钉到桌面</button>
                       <button onClick={async () => { setMenuFor(null); await askProtect('note', r.id, r.title || '这篇笔记'); toast('已加密码保护'); }}>加密码</button>
                       <button onClick={() => { setMenuFor(null); void api.exportNote(r.id).then((x) => toast(x.ok ? '已导出到导出目录' : '导出失败')); }}>导出 HTML</button>
                       <button style={{ color: 'var(--bad)' }} onClick={() => { setMenuFor(null); void remove(r.id); }}>移到回收站</button>
                     </div>
+                  ) : null}
+
+                  {/* 第 128 条：色点展开的小面板，就地换色，不弹模态框 */}
+                  {markPick === r.id ? (
+                    <NoteMarkPicker
+                      color={r.color || ''}
+                      icon={r.icon || ''}
+                      bookColor={books.find((b) => b.id === r.notebookId)?.color}
+                      onPick={(patch) => void setMark(r.id, patch)}
+                      onClose={() => setMarkPick(null)}
+                    />
                   ) : null}
                 </div>
               );
@@ -699,6 +859,19 @@ export function NotesView() {
               */
               <Guarded scope="note" target={activeNoteId} label={cur?.title || '这篇笔记'} mode="block">
                 <div className="nedit-h">
+                  {/* 第 128 条：编辑器里也能看到 / 改这篇的颜色与图标 */}
+                  <span style={{ position: 'relative', flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <NoteDot
+                      color={noteColor || curBook?.color || ''}
+                      inherited={!noteColor}
+                      size={11}
+                      title="改这篇的颜色 / 图标"
+                      onClick={() => setMarkPick(markPick === activeNoteId ? null : activeNoteId)}
+                    />
+                    {noteIcon ? <span style={{ color: 'var(--ink3)', display: 'inline-flex' }}>
+                      <Icon name={noteIcon as never} size={12} />
+                    </span> : null}
+                  </span>
                   <input
                     className="ntitle"
                     value={title}
@@ -731,6 +904,20 @@ export function NotesView() {
                     </button>
                   ) : null}
                 </div>
+
+                {/* 第 128 条：面板就地展开在下面一行，不盖住正文也不弹模态框 */}
+
+                {markPick === activeNoteId ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <NoteMarkPicker
+                      color={noteColor}
+                      icon={noteIcon}
+                      bookColor={curBook?.color}
+                      onPick={(patch) => void setMark(activeNoteId, patch)}
+                      onClose={() => setMarkPick(null)}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="row" style={{ gap: 5, marginBottom: 8 }}>
                   <span className="small muted" style={{ fontSize: 11 }}>标签</span>

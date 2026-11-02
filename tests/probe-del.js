@@ -1,6 +1,6 @@
 const { chromium } = require('playwright-core');
 (async () => {
-  const b = await chromium.connectOverCDP('http://127.0.0.1:57001');
+  const b = await chromium.connectOverCDP('http://127.0.0.1:' + (process.env.CDP_PORT || '57011'));
   const p = b.contexts()[0].pages()[0];
   p.setDefaultTimeout(12000);
   const errs = []; p.on('pageerror', e => errs.push(e.message));

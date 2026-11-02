@@ -99,13 +99,19 @@ namespace Riqian
             M("habit.trash",       "打卡", "把习惯放进回收站", "id", true),
             M("habit.restore",     "打卡", "恢复习惯", "id", true),
             M("habit.purge",       "打卡", "彻底删除习惯", "id", true),
-            M("habit.remindPreview", "打卡", "预览提醒文案", "date?"),
+            M("habit.remindPreview", "打卡", "预览提醒文案（含提前量与响铃时刻）", "date?"),
+            /* 这个判断原来是宿主定时器内部的私有逻辑，不对外。
+               但定时器 30 秒才问一次、还得等真的到点，出问题时没法当场验证。
+               注意这里暴露的是**只读**的检查版（remindCheck），
+               不是真会记账的 remindTick —— 后者调用一次就会消耗一次提醒额度。 */
+            M("habit.remindCheck", "打卡", "此刻该不该提醒（只读，不消耗额度）", ""),
 
             /* ---------- 笔记 ---------- */
             M("notes.list",        "笔记", "笔记列表", "q?, notebookId?"),
             M("notes.trash",       "笔记", "笔记回收站", ""),
             M("note.get",          "笔记", "取一篇笔记", "id"),
-            M("note.save",         "笔记", "新建/保存笔记", "id?, title?, content?, notebookId?", true),
+            M("note.save",         "笔记", "新建/保存笔记", "id?, title?, content?, notebookId?, color?, icon?", true,
+              "第 128 条：color/icon 传 null 表示“这项不改”，传空串表示“清掉”"),
             M("note.delete",       "笔记", "删笔记（进回收站）", "id", true),
             M("note.restore",      "笔记", "从回收站恢复", "id", true),
             M("note.purge",        "笔记", "彻底删一篇", "id", true),
@@ -141,6 +147,18 @@ namespace Riqian
             M("account.reorder",   "记账", "账户拖动排序", "ids: 数组", true),
             M("account.toggle",    "记账", "启用/停用账户", "id, enabled", true),
 
+            /* ---------- 储蓄罐（第 97 条） ---------- */
+            M("jar.list",          "储蓄罐", "罐子列表（含余额与完成百分比）", ""),
+            M("jar.detail",        "储蓄罐", "一个罐子的明细与下一期金额", "id"),
+            M("jar.add",           "储蓄罐", "新建罐子", "name, target, mode, period, baseAmount, stepAmount, color?, icon?, note?", true),
+            M("jar.update",        "储蓄罐", "改罐子", "id, name, target, mode, period, baseAmount, stepAmount, color?, icon?, note?", true),
+            M("jar.deposit",       "储蓄罐", "存钱 / 取钱（记进 ledger）", "id, dir: in|out, amount, date?, note?", true),
+            M("jar.removeItem",    "储蓄罐", "删掉某一笔存钱记录", "id", true),
+            M("jar.delete",        "储蓄罐", "删掉罐子（流水保留）", "id", true),
+            M("jar.archive",       "储蓄罐", "归档 / 取消归档", "id, archived", true),
+            M("jar.reorder",       "储蓄罐", "拖动排序", "ids: 数组", true),
+            M("jar.presets",       "储蓄罐", "三种存钱模式的经典预设", ""),
+
             /* ---------- 日历 ---------- */
             M("stats.calendar",    "日历", "某月的日历格子数据", "ym"),
             M("stats.calMonths",   "日历", "有记录的月份列表", ""),
@@ -159,7 +177,7 @@ namespace Riqian
             M("pomodoro.edit",     "番茄钟", "改一颗", "id, minutes?, task?, note?", true),
             M("pomodoro.delete",   "番茄钟", "删一颗（记错了要能撤）", "id", true),
             M("pomodoro.stats",    "番茄钟", "专注统计", "from?, to?"),
-            M("pomo.insight",      "番茄钟", "专注聚合洞察", "ym"),
+            M("pomo.insight",      "番茄钟", "专注聚合洞察（days 或 from/to 二选一）", "days?, from?, to?"),
             M("pomo.day",          "番茄钟", "某天的专注明细", "date"),
             M("pomo.months",       "番茄钟", "有专注记录的月份", ""),
 
@@ -175,7 +193,8 @@ namespace Riqian
             M("media.alias",       "多媒体", "改显示别名（不动磁盘文件名）", "id, alias", true),
             M("media.rename",      "多媒体", "改磁盘文件名", "id, name", true, "会真的重命名文件"),
             M("media.bulk",        "多媒体", "批量操作（移动/删除）", "ids: 数组, op, folder?", true),
-            M("media.folders",     "多媒体", "文件夹列表", ""),
+            M("media.folders",     "多媒体", "文件夹列表（含层级）", "", false,
+              "第 220 条：folder 用 / 分层次；返回带 name/own/n/depth，中间层自动补齐"),
             M("media.tone",        "多媒体", "调色参数（亮度/对比度/饱和）", "id, tone", true),
             M("media.storage",     "多媒体", "占用统计", ""),
             M("media.scan",        "多媒体", "扫描目录补齐索引", "", true),
@@ -187,7 +206,8 @@ namespace Riqian
             M("media.cacheAll",    "多媒体", "把全部远程媒体缓存到本地", "", true, "会跑一阵，别随手点"),
             M("media.tags",        "多媒体", "标签清单（含每个标签的文件数）", ""),
             M("media.setTags",     "多媒体", "改一个文件的标签（逗号分隔）", "id, tags", true),
-            M("media.renameFolder", "多媒体", "文件夹改名（整批跟着走）", "from, to", true),
+            M("media.renameFolder", "多媒体", "文件夹改名（连整棵子树）", "from, to", true,
+              "第 220 条：改 a 会把 a/b、a/b/c 一起改成新前缀"),
 
             /* ---------- 提醒 / 倒计时 ---------- */
             M("alarm.list",        "提醒", "提醒列表", ""),
@@ -197,7 +217,8 @@ namespace Riqian
             M("alarm.skipMissed",  "提醒", "跳过今天已错过的点", ""),
             M("cd.list",           "倒计时", "倒计时列表", ""),
             M("cd.add",            "倒计时", "新建倒计时", "title, date", true),
-            M("cd.update",         "倒计时", "改倒计时", "id, ...字段", true),
+            M("cd.update",         "倒计时", "改倒计时", "id, ..., star?", true,
+              "第 101 条：star 是四象限（1 紧急且重要 / 2 重要不紧急 / 3 紧急不重要 / 4 都不），-1 表示不改"),
             M("cd.delete",         "倒计时", "删倒计时（进回收站）", "id", true),
             M("cd.trash",          "倒计时", "回收站列表", ""),
             M("cd.restore",        "倒计时", "从回收站恢复", "id", true),
@@ -206,7 +227,8 @@ namespace Riqian
 
             /* ---------- 搜索 / 统计 ---------- */
             M("search.all",        "搜索", "跨模块全文搜索", "q, limit?"),
-            M("stats.overview",    "统计", "总览数据", ""),
+            M("stats.overview",    "统计", "总览数据（12 条：可传区间）", "from?, to?", false,
+              "传 from/to 只影响日记/心情/字数/标签/收藏/打卡/番茄/待办；连续天数与总数不跟区间"),
             M("stats.rank",        "统计", "连续写作排行", ""),
             M("stats.rankExtra",   "统计", "排行附加数据", ""),
             M("stats.reset",       "统计", "重置统计数据（番茄 / 打卡等）", "what?", true,
@@ -301,6 +323,7 @@ namespace Riqian
             M("shell.hotkeyState", "宿主", "热键注册状态", ""),
             M("shell.autostart",   "宿主", "开机自启开关", "on: 0|1", true),
             M("shell.autostartGet", "宿主", "读开机自启状态", ""),
+            M("shell.lockState",   "宿主", "同步应用锁状态（托盘图标叠小锁）", "locked: 0|1"),
             M("shell.openUrl",     "宿主", "用系统默认程序打开链接", "url"),
 
             /* ---------- 快捷捕获（165） ---------- */
@@ -315,6 +338,10 @@ namespace Riqian
             M("cache.prune",       "缓存", "按策略清理", "", true),
             M("cache.clear",       "缓存", "清空缓存", "", true),
             M("cache.open",        "缓存", "打开缓存目录", ""),
+            /* 第 42 条：桌面常驻便签（像 Simple Sticky Notes 那样钉在桌面上） */
+            M("sticky.open",       "笔记", "把某篇笔记钉到桌面（常驻便签窗）", "id", true),
+            M("sticky.close",      "笔记", "取消桌面便签", "id"),
+            M("sticky.list",       "笔记", "当前钉着哪些便签", ""),
 
             /* ---------- 加解密 / 安全 ---------- */
             M("vault.status",      "安全", "加密库状态", ""),
@@ -341,6 +368,7 @@ namespace Riqian
             M("diag.ping",         "诊断", "打一行测试日志，验通道", "msg?"),
             M("diag.methods",      "诊断", "列出全部 RPC 方法（AI 自助发现入口）", "limit?"),
             M("diag.method",       "诊断", "查单个方法的详细说明", "name"),
+            M("diag.checkpoint",   "诊断", "把 WAL 并回主库，返回前后字节数（迁移前自检用）", ""),
             M("diag.openDir",      "诊断", "打开日志所在文件夹", ""),
             M("diag.api",          "诊断", "AI 调试网关开关与状态", "on? (\"1\"/\"0\"), port?",
               true, "开了就在本机开一个 HTTP 口；防火墙外连不进来，但仍是安全敏感项"),

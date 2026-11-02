@@ -141,6 +141,7 @@ namespace Riqian
 
             /* 第 140 条：打卡提醒（预览用，正式推送在定时器里） */
             if (m == "habit.remindPreview") return db.HabitRemindPreview();
+            if (m == "habit.remindCheck") return db.HabitRemindCheck();
             /* 第 21 条：节日提醒预览（设置页用，看现在提醒会长什么样） */
             if (m == "festival.remindPreview") return db.FestivalRemindPreview();
 
@@ -172,6 +173,23 @@ namespace Riqian
             /* 账户排序 / 启停（第 221 条） */
             if (m == "account.reorder") return db.AccountReorder(AA(a, "ids"));
             if (m == "account.toggle") return db.AccountToggle(S(a, "id"), I(a, "enabled", 1));
+
+            /* 储蓄罐（第 97 条）*/
+            if (m == "jar.list") return db.JarList();
+            if (m == "jar.detail") return db.JarDetail(S(a, "id"));
+            if (m == "jar.add") return db.JarAdd(S(a, "name"), D(a, "target"), S(a, "mode", "free"),
+                S(a, "period", "week"), D(a, "baseAmount"), D(a, "stepAmount"),
+                S(a, "color", ""), S(a, "icon", ""), S(a, "note", ""));
+            if (m == "jar.update") return db.JarUpdate(S(a, "id"), S(a, "name"), D(a, "target"),
+                S(a, "mode", "free"), S(a, "period", "week"), D(a, "baseAmount"), D(a, "stepAmount"),
+                S(a, "color", ""), S(a, "icon", ""), S(a, "note", ""));
+            if (m == "jar.deposit") return db.JarDeposit(S(a, "id"), S(a, "dir", "in"), D(a, "amount"),
+                S(a, "date", ""), S(a, "note", ""), S(a, "accountId", ""));
+            if (m == "jar.removeItem") return db.JarRemoveItem(S(a, "id"));
+            if (m == "jar.delete") return db.JarDelete(S(a, "id"));
+            if (m == "jar.archive") return db.JarArchive(S(a, "id"), I(a, "archived", 1));
+            if (m == "jar.reorder") return db.JarReorder(AA(a, "ids"));
+            if (m == "jar.presets") return db.JarPresets();
 
             /* 记账本图表数据（第 205 条） */
             if (m == "ledger.insight") return db.LedgerInsight(S(a, "ym"));
@@ -245,6 +263,11 @@ namespace Riqian
             // 方法清单：让 AI 自己发现有哪些接口（详细版见 RpcCatalog）
             if (m == "diag.methods") return RpcCatalog.List(I(a, "limit", 0));
             if (m == "diag.method") return RpcCatalog.Describe(S(a, "name"));
+
+            /* 手动让 WAL 落盘。诊断用，也给迁移前的自检用。
+               WAL 模式下"已提交"和"进了主文件"是两件事，
+               想知道某个时刻单拷主文件够不够，先跑一下这个看 -wal 归不归零。 */
+            if (m == "diag.checkpoint") return db.ForceCheckpoint();
 
             // 打开日志目录。不能复用 app.openRoot —— 那是数据目录，日志在
             // %LOCALAPPDATA%\Riqian\logs，跟数据目录不同源（数据可以搬家，日志不搬）。

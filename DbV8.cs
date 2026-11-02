@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS vault_qa(
             SeedDefault("orbSize", "56");
             SeedDefault("taskbarShow", "1");             // 是否占任务栏
             SeedDefault("disguiseStyle", "note");        // note | blank | sheet
+            SeedDefault("trayLockIcon", "1");            // 第 75 条：锁定后托盘图标叠小锁角标
 
             // 总结与分享
             SeedDefault("reviewDays", "7");

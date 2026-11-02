@@ -78,9 +78,13 @@ def write_md(names):
     os.makedirs(docs, exist_ok=True)
 
     # 从 RpcCatalog.cs 里捞描述，做成一表（有这个信息文档才有用）
+    # 注意：write 位是可选的（M 的签名给了默认值 false）。早期这里的正则把
+    # `true|false` 写成了必选组，导致所有「不写 write 位」的条目（如 stats.overview、
+    # shell.openUrl）一条都捞不到，清单上就一直显示成空白行。用 (?:\s*,\s*(true|false))? 兜住。
     cat = io.open(os.path.join(ROOT, 'RpcCatalog.cs'), encoding='utf-8').read()
     meta = {}
-    for mt in re.finditer(r'M\("([^"]+)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*(true|false)?', cat):
+    for mt in re.finditer(
+            r'M\("([^"]+)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)"(?:\s*,\s*(true|false))?', cat):
         meta[mt.group(1)] = dict(group=mt.group(2), desc=mt.group(3), args=mt.group(4),
                                  write=(mt.group(5) == 'true'))
 

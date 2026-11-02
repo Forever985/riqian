@@ -532,14 +532,14 @@ export function TodoListDialog({
 
 /* ---------------- 四象限（艾森豪威尔） ---------------- */
 
-export type QuadKey = 'ui' | 'un' | 'in' | 'nn';
+/*
+ * 第 101 条：四格的定义已经挪到 `features/quad.tsx` 共用 —— 倒计时和番茄钟
+ * 也要用同一套。这里保留原来的导出名，调用点一行不用改。
+ */
+import { QUADRANTS, QuadHint, quadOf, type QuadKey } from './quad';
 
-export const QUADRANTS: { key: QuadKey; title: string; hint: string; color: string }[] = [
-  { key: 'ui', title: '紧急且重要', hint: '马上做', color: 'var(--bad)' },
-  { key: 'un', title: '紧急不重要', hint: '尽快处理或转交', color: 'var(--warn)' },
-  { key: 'in', title: '重要不紧急', hint: '安排时间做', color: 'var(--accent)' },
-  { key: 'nn', title: '都不', hint: '有空再说', color: 'var(--ink3)' },
-];
+export { QUADRANTS, QuadHint };
+export type { QuadKey };
 
 /** 重要 = priority >= 2（高 / 紧急）；紧急 = 没有日期算不紧急，今天或明天到期算紧急 */
 export function isImportant(t: Todo): boolean {
@@ -567,22 +567,5 @@ export function quadPatch(q: QuadKey, today: string): { priority: number; due: s
 }
 
 export function quadrantOf(t: Todo, today: string): QuadKey {
-  const important = isImportant(t);
-  const urgent = isUrgent(t, today);
-  if (urgent && important) return 'ui';
-  if (urgent) return 'un';
-  if (important) return 'in';
-  return 'nn';
-}
-
-/* ---------------- 一个小的说明块，四象限和列表都能用 ---------------- */
-
-export function QuadHint() {
-  return (
-    <div className="small muted" style={{ lineHeight: 1.8, marginBottom: 10 }}>
-      两个维度都是自动算的：<b>重要</b> = 优先级「高 / 紧急」，<b>紧急</b> = 今天或明天到期。
-      <br />
-      想换格子不用改优先级 —— 直接把待办<b>拖到</b>那个格子里就行，日期和优先级会跟着调好。
-    </div>
-  );
+  return quadOf(isImportant(t), isUrgent(t, today));
 }

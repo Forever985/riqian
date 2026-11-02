@@ -8,7 +8,9 @@ import { BarChart, Donut } from '../components/Charts';
 import { PomoDayDialog } from '../components/PomoDayDialog';
 import { TodoPicker } from '../components/TodoPicker';
 import { fmtClock, inHMWindow, nowHM, todayKey } from '../lib/date';
-import type { PomodoroStats } from '../types';
+import { QUADRANTS, type QuadKey } from '../features/quad';
+import { quadrantOf } from '../features/todos';
+import type { PomodoroStats, Todo } from '../types';
 
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
 
@@ -55,6 +57,8 @@ export function PomodoroView() {
   const [breakInput, setBreakInput] = useState(String(pomo.breakMin));
   /** 第 186 条：点开某一天的明细 */
   const [dayPick, setDayPick] = useState<string | null>(null);
+  /* 第 101 条：四象限挑任务面板 */
+  const [quadOpen, setQuadOpen] = useState(false);
 
   /** 第 8 / 130 条：range=-1 表示走自定义 from/to */
   const useCustom = range === -1;
@@ -109,10 +113,12 @@ export function PomodoroView() {
         sub={stats ? `今天 ${stats.todayCount} 颗 · ${stats.todayMinutes} 分钟` : undefined}
         right={
           <span className={`dnd-chip ${inDnd ? 'on' : ''}`} title="勿扰时段内不弹窗不响铃">
-            <Icon name={inDnd ? 'mute' : 'bell'} size={12} />
+            <Icon name={inDnd ? 'mute' : 'bell'} size={12}
+      />
             {inDnd ? '勿扰中' : `现在 ${nowHM()}`}
           </span>
         }
+        lock={{ scope: 'pomodoro', label: '番茄钟' }}
       />
       <div className="wrap wide">
         <div className="card">
@@ -211,7 +217,18 @@ export function PomodoroView() {
             {/* 第 102 条：别的页面写过的事，别让人再打一遍 */}
             <div className="row" style={{ justifyContent: 'center', marginTop: -2 }}>
               <TodoPicker onPick={(t) => setTask(t)} current={pomo.task} />
+              <button
+                className={`btn sm ghost ${quadOpen ? 'primary' : ''}`}
+                title="按「重要 × 紧急」挑接下来做哪件"
+                onClick={() => setQuadOpen(!quadOpen)}
+              >
+                <Icon name="grid" size={13} />四象限挑任务
+              </button>
             </div>
+
+            {/* 第 101 条：番茄钟的四象限 —— 它没有自己的条目，能分象限的是「待办」，
+                所以这里的用法不是「给番茄打标」，而是「从四格里挑这一颗做什么」 */}
+            {quadOpen ? <PomoQuadBoard onPick={(t) => { setTask(t); setQuadOpen(false); }} /> : null}
 
             <div className="notify-hint">
               <Icon name={sound && (desktop || tray) ? 'volume' : 'mute'} size={13} />
@@ -635,4 +652,126 @@ function TimerCard({ onDone }: { onDone: () => void }) {
       </div>
     </div>
   );
+}
+
+/* ---------------- 第 101 条：四象限挑任务 ---------------- */
+
+/**
+ * 番茄钟的四象限。
+ *
+ * 这里和待办、倒计时那两个不太一样，值得说清楚：
+ *   · 待办页的四象限是「看」自己的待办；
+ *   · 倒计时页是「看」自己的日子；
+ *   · 番茄钟**没有自己的条目** —— 一颗番茄的标题就是待办标题。
+ *     所以它能做的唯一有意义的四象限动作，是「按象限挑接下来做哪件」。
+ *
+ * 硬做成「给番茄打重要/紧急标记」是把数据模型搞反：番茄是**结果**，
+ * 记录的是「我刚做了什么」，不是「我打算做什么」。给结果打优先级没有意义。
+ *
+ * 数据来源：`api.todos.list('manual')`，只取未完成、未删的。
+ * 为什么不用 store 里的 todos：那个列表是按当前视图筛过的，四象限要全量。
+ */
+function PomoQuadBoard({ onPick }: { onPick: (title: string) => void }) {
+  const toast = useStore((s) => s.toast);
+  const [all, setAll] = useState<Todo[] | null>(null);
+  const [dragId, setDragId] = useState('');
+  const [over, setOver] = useState('');
+  const today = todayKey();
+
+  useEffect(() => {
+    let alive = true;
+    void api.todos.list('manual')
+      .then((x) => { if (alive) setAll(x); })
+      .catch(() => { if (alive) setAll([]); });
+    return () => { alive = false; };
+  }, []);
+
+  /** 换格子 = 反推 priority + due，和待办页一个路数 */
+  const moveTo = async (id: string, q: QuadKey) => {
+    const t = (all || []).find((x) => x.id === id);
+    if (!t || quadrantOf(t, today) === q) return;
+    const patch = q === 'ui' ? { priority: 2, due: today }
+      : q === 'un' ? { priority: 1, due: today }
+        : q === 'in' ? { priority: 2, due: shift(today, 7) }
+          : { priority: 0, due: '' };
+    try {
+      await api.todos.update({ id, ...patch });
+      const next = await api.todos.list('manual');
+      setAll(next);
+      toast('已换格子');
+    } catch {
+      toast('换格子失败了');
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="small muted" style={{ marginBottom: 8, lineHeight: 1.7, textAlign: 'left' }}>
+        点一条就把它填进上面那个任务框。<b>重要</b> = 优先级高，<b>紧急</b> = 今天或明天到期。
+        也能直接把条目拖到别的格子里换象限。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {QUADRANTS.map((qd) => {
+          const items = (all || []).filter((t) => !t.done && !t.trashed && quadrantOf(t, today) === qd.key);
+          return (
+            <div
+              key={qd.key}
+              className={`quad-cell ${over === qd.key ? 'drop-target' : ''}`}
+              style={{
+                border: '1px solid var(--line)', borderTop: `3px solid ${qd.color}`,
+                borderRadius: 9, padding: '8px 10px', textAlign: 'left', minHeight: 64,
+              }}
+              onDragOver={(e) => {
+                if (!dragId) return;
+                e.preventDefault();
+                if (over !== qd.key) setOver(qd.key);
+              }}
+              onDragLeave={() => { if (over === qd.key) setOver(''); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const id = dragId || e.dataTransfer.getData('text/plain');
+                setDragId(''); setOver('');
+                if (id) void moveTo(id, qd.key);
+              }}
+            >
+              <div className="row" style={{ gap: 6, marginBottom: 4 }}>
+                <b style={{ fontSize: 12.5 }}>{qd.title}</b>
+                <span className="small muted" style={{ fontSize: 10.5 }}>{qd.hint}</span>
+                <span style={{ flex: 1 }} />
+                <span className="small muted">{items.length}</span>
+              </div>
+              {!all ? <div className="small muted">读取中…</div> : null}
+              {all && !items.length ? <div className="small muted" style={{ fontSize: 11.5 }}>空着</div> : null}
+              {items.slice(0, 12).map((t) => (
+                <div
+                  key={t.id}
+                  className={`quad-drag ${dragId === t.id ? 'dragging' : ''}`}
+                  draggable
+                  title="点一下填进任务框；按住能拖到别的格子"
+                  onClick={() => onPick(t.title)}
+                  onDragStart={(e) => {
+                    setDragId(t.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', t.id);
+                  }}
+                  onDragEnd={() => { setDragId(''); setOver(''); }}
+                  style={{
+                    fontSize: 12.5, padding: '2px 0', cursor: 'pointer',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                >{t.title}</div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 加天数，只在这一个文件里用，不为它去引日期库 */
+function shift(d: string, n: number): string {
+  const x = new Date(`${d}T00:00:00`);
+  x.setDate(x.getDate() + n);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }

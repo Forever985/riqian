@@ -9,7 +9,7 @@ import type {
   AccountItem, AlarmItem, AppFacts, DraftItem, EncourageItem, HabitStatData, LedgerData, LedgerInsight, LedgerItem,
   PomoInsight, PomoDay, PomoMonth, RankData, RankExtraData, RecurItem, ReviewDay, ReviewRange, Settings, SummaryRow, TagCount,
   Template, Todo, TodoList, TodoSortMode, UserProfile, VaultQa, VaultStatus, DiagStats,
-  DrawingMeta, DrawingFull,
+  DrawingMeta, DrawingFull, Jar, JarDetail, JarPreset,
 } from './types';
 import type { ImportedFont } from './lib/fonts';
 
@@ -272,7 +272,7 @@ export const api = {
   },
 
   stats: {
-    overview: () => rpc<Overview>('stats.overview'),
+    overview: (p?: { from?: string; to?: string }) => rpc<Overview>('stats.overview', p || {}),
     /** 第 157 条：重置统计。只清番茄/打卡记录，日记正文绝不会被删 */
     reset: (what: 'pomodoro' | 'habits' | 'all') =>
       rpc<{ ok: boolean; pomodoro?: number; habits?: number; err?: string }>('stats.reset', { what }),
@@ -337,7 +337,11 @@ export const api = {
   notes: {
     list: (p: { notebookId?: string; q?: string; limit?: number } = {}) => rpc<NoteRow[]>('notes.list', p),
     get: (id: string) => rpc<NoteDetail>('note.get', { id }),
-    save: (p: { id: string; notebookId: string; title: string; body: string; pinned: number }) =>
+    save: (p: {
+      id: string; notebookId: string; title: string; body: string; pinned: number;
+      /** 第 128 条：不传 = 不动它（自动保存走这条，免得把用户选的色点抹掉） */
+      color?: string; icon?: string;
+    }) =>
       rpc<{ ok: boolean; id: string; plain: string; chars: number }>('note.save', p),
     remove: (id: string) => rpc<{ ok: boolean }>('note.delete', { id }),
     restore: (id: string) => rpc<{ ok: boolean }>('note.restore', { id }),
@@ -376,7 +380,9 @@ export const api = {
   },
 
   /** 番茄钟洞察统计 */
-  pomoInsight: (days: number) => rpc<PomoInsight>('pomo.insight', { days }),
+  /** 第 131 条：传了 from 就按绝对日期取（统计页的今年/去年/自定义），否则按天数 */
+  pomoInsight: (days: number, from?: string, to?: string) =>
+    rpc<PomoInsight>('pomo.insight', from ? { days, from, to } : { days }),
   /** 某一天的番茄明细（第 186 条） */
   pomoDay: (date: string) => rpc<PomoDay>('pomo.day', { date }),
   /** 哪几个月有番茄记录 */
@@ -406,7 +412,14 @@ export const api = {
   mediaAlias: (id: string, alias: string) => rpc<{ ok: boolean }>('media.alias', { id, alias }),
   mediaBulk: (ids: string[], action: 'delete' | 'folder' | 'tag' | 'untag', value = '') =>
     rpc<{ ok: boolean; n: number }>('media.bulk', { ids: ids.join(','), action, value }),
-  mediaFolders: () => rpc<{ folder: string; n: number }[]>('media.folders'),
+  /**
+   * 第 220 条：文件夹改成层级路径（`旅行/2024/京都`）。
+   *   name  = 最后一段，用来显示
+   *   own   = 只属于这一层的文件数
+   *   n     = 含子层的总数
+   *   depth = 层级深度，前端据此缩进
+   */
+  mediaFolders: () => rpc<{ folder: string; name?: string; own?: number; n: number; depth?: number }[]>('media.folders'),
   /* 第 151 条：标签（一个文件可属多个分类）与文件夹改名 */
   mediaTags: () => rpc<{ tag: string; n: number }[]>('media.tags'),
   mediaSetTags: (id: string, tags: string) => rpc<{ ok: boolean; tags: string }>('media.setTags', { id, tags }),
@@ -516,6 +529,26 @@ export const api = {
   ledgerRecurDelete: (id: string) => rpc<{ ok: boolean }>('ledger.recur.delete', { id }),
   /** 生成某月周期账单（幂等：同一规则同一个月只生成一次） */
   ledgerRecurRun: (month: string) => rpc<{ ok: boolean; made: number; month: string }>('ledger.recur.run', { month }),
+
+  /* ---------------- 储蓄罐（第 97 条） ---------------- */
+  jarList: () => rpc<{ jars: Jar[]; total: number }>('jar.list'),
+  jarDetail: (id: string) => rpc<JarDetail>('jar.detail', { id }),
+  jarAdd: (p: {
+    name: string; target: number; mode: string; period: string;
+    baseAmount: number; stepAmount: number; color?: string; icon?: string; note?: string;
+  }) => rpc<{ ok: boolean; id: string; err?: string }>('jar.add', p),
+  jarUpdate: (p: {
+    id: string; name: string; target: number; mode: string; period: string;
+    baseAmount: number; stepAmount: number; color?: string; icon?: string; note?: string;
+  }) => rpc<{ ok: boolean; err?: string }>('jar.update', p),
+  /** dir: in 存入 / out 取出。取出超过余额会被后端拒绝。accountId 传了才会动账户余额 */
+  jarDeposit: (p: { id: string; dir: 'in' | 'out'; amount: number; date?: string; note?: string; accountId?: string }) =>
+    rpc<{ ok: boolean; id?: string; err?: string }>('jar.deposit', p),
+  jarRemoveItem: (id: string) => rpc<{ ok: boolean }>('jar.removeItem', { id }),
+  jarDelete: (id: string) => rpc<{ ok: boolean }>('jar.delete', { id }),
+  jarArchive: (id: string, archived: number) => rpc<{ ok: boolean }>('jar.archive', { id, archived }),
+  jarReorder: (ids: string[]) => rpc<{ ok: boolean }>('jar.reorder', { ids }),
+  jarPresets: () => rpc<JarPreset[]>('jar.presets'),
   revDedup: (date: string) =>
     rpc<{ id: number; createdAt: string; chars: number; sameAsPrev: boolean }[]>('rev.dedup', { date }),
 
@@ -552,6 +585,8 @@ export const api = {
     /** 第 191 条：开机自启，写 HKCU 的 Run 键 */
     setAutostart: (on: number) => rpc<{ ok: boolean; on?: number; err?: string }>('shell.autostart', { on }),
     autostartGet: () => rpc<{ ok: boolean; on: number }>('shell.autostartGet'),
+    /** 第 75 条：把「现在锁着没」告诉宿主，托盘图标据此叠小锁角标 */
+    lockState: (locked: number) => rpc<{ ok: boolean; locked?: boolean; icon?: string }>('shell.lockState', { locked }),
     /** 第 90 条：交给系统默认程序打开 http/https/mailto（WebView2 里点 mailto 不动） */
     openUrl: (url: string) => rpc<{ ok: boolean; err?: string }>('shell.openUrl', { url }),
     boss: () => rpc<{ ok: boolean; on: boolean }>('boss.toggle'),
@@ -563,6 +598,16 @@ export const api = {
     prune: (days = 0, maxMB = 0) => rpc<{ ok: boolean; removed: number; freedMB: number }>('cache.prune', { days, maxMB }),
     clear: (what: 'cache' | 'thumbs' | 'backup' | 'all') => rpc<{ ok: boolean; removed: number; freedMB: number }>('cache.clear', { what }),
     open: () => rpc<{ ok: boolean }>('cache.open'),
+  },
+
+  /**
+   * 第 42 条：桌面常驻便签。
+   * 和「快捷浮窗」不同 —— 它是钉在桌面上的一个小窗，不随主窗口隐藏，失焦也不关。
+   */
+  sticky: {
+    open: (id: string) => rpc<{ ok: boolean; already?: boolean; n?: number; err?: string }>('sticky.open', { id }),
+    close: (id: string) => rpc<{ ok: boolean; n: number }>('sticky.close', { id }),
+    list: () => rpc<{ ok: boolean; items: { id: string; visible: boolean }[]; n: number }>('sticky.list'),
   },
 
   settingsIO: {
@@ -618,9 +663,25 @@ export const api = {
     all: (q: string, per = 6) => rpc<SearchHit[]>('search.all', { q, per }),
   },
 
-  /* 第 140 条：打卡提醒 */
+  /* 第 140 条：打卡提醒。第 98 条补了提前量 / 间隔重复 / 提醒方式 */
   habitRemind: {
-    preview: () => rpc<{ count: number; names: string[]; on: boolean; at: string }>('habit.remindPreview'),
+    preview: () => rpc<{
+      count: number;
+      names: string[];
+      on: boolean;
+      at: string;
+      /** 提前多少分钟 */
+      lead: number;
+      /** 重复间隔分钟，0 = 一天只说一次 */
+      every: number;
+      how: 'sound' | 'badge' | 'silent' | string;
+      /** 今天已经响过几次 */
+      todayTimes: number;
+      /** 今天最多响几次 */
+      maxTimes: number;
+      /** 今天会在哪几个时刻响，如 ['20:30','20:45'] */
+      fireAt: string[];
+    }>('habit.remindPreview'),
   },
 };
 

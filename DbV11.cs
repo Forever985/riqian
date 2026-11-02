@@ -26,13 +26,38 @@ namespace Riqian
             // 加 sort 列，空库老数据按 0 处理（等于「都相等」，靠 id 兜底保持稳定）
             EnsureColumn("notes", "sort", "INTEGER DEFAULT 0");
 
+            /*
+             * 第 128 条：笔记自己的颜色和图标。
+             *
+             * 原来只有「笔记本」有颜色 —— 用户原话是「老的那些笔记有颜色图标，
+             * 但是新建笔记没有颜色图标」，因为他看到的颜色其实是**笔记本的圆点**，
+             * 单篇笔记根本没有自己的标识。一堆笔记挤在同一本里时，只能靠标题认。
+             *
+             * 为什么给笔记也存一份，而不是「继承笔记本颜色就够了」：
+             *   · 同一本里 20 篇笔记全长一个色，等于没有标识；
+             *   · 空串 = 跟随笔记本，不是「没设置」—— 显式继承比隐式默认更好解释；
+             *   · 单篇标色是「这篇特别重要」这种临时语义，不该反向去改笔记本。
+             */
+            EnsureColumn("notes", "color", "TEXT DEFAULT ''");
+            EnsureColumn("notes", "icon", "TEXT DEFAULT ''");
+
+            /*
+             * 第 101 条：倒计时也要能分四象限。
+             *
+             * 「紧急」是算出来的（还剩几天），但「重要」在倒计时里没有任何字段可依 ——
+             * 它不像待办有优先级。所以给一个最轻的标记：star（0/1）。
+             * 为什么不用优先级 0-3 那套：倒计时的语义是「这个日子对我重要」，
+             * 没有「有点重要 / 非常重要」的中间态，四个档位反而逼用户瞎选。
+             */
+            EnsureColumn("countdowns", "star", "INTEGER DEFAULT 0");
+
             // 第 220 条：笔记本要能无限嵌套。parent_id 早有了，缺的是一个防环校验 ——
             // 没有它，用户把 A 拖进 B、又把 B 拖进 A，子树就成一坨死循环，前端递归直接爆栈
             EnsureColumn("notebooks", "sort", "INTEGER DEFAULT 0");
 
             // 第 227 条：草稿箱要有回收站。用定稿标记 + 删除时间区分：
-            //   published=0 且 deleted_at 为空 → 草稿箱
-            //   deleted_at 不为空              → 回收站
+            //   status<>'published' 且 deleted_at 为空 → 草稿箱
+            //   deleted_at 不为空                      → 回收站
             EnsureColumn("entries", "deleted_at", "TEXT DEFAULT NULL");
 
             /* ---------- 2. 学习模块（原番茄钟）---------- */
@@ -250,7 +275,11 @@ namespace Riqian
         public object DraftTrash(string date)
         {
             if (string.IsNullOrWhiteSpace(date)) return new { ok = false, err = "没指定哪一天" };
-            Exec("UPDATE entries SET deleted_at=$t WHERE date=$d AND IFNULL(published,0)=0",
+            /* 判据是 status，不是 published —— entries 表里从来就没有 published 这一列，
+               定稿与否全靠 status（DbV9.cs:22 建的，值域 draft | published）。
+               写成 published 会直接抛 "no such column"，而且批量删那边包了 try/catch，
+               用户看到的是「N 篇已移到回收站」的假成功提示，实际一篇都没动。 */
+            Exec("UPDATE entries SET deleted_at=$t WHERE date=$d AND IFNULL(status,'draft')<>'published'",
                 ("$t", Now), ("$d", date));
             return new { ok = true };
         }
@@ -267,7 +296,7 @@ namespace Riqian
         public object DraftTrashList()
         {
             return Rows(@"SELECT date, title, plain, updated_at, deleted_at FROM entries
-                          WHERE IFNULL(deleted_at,'')<>'' AND IFNULL(published,0)=0
+                          WHERE IFNULL(deleted_at,'')<>'' AND IFNULL(status,'draft')<>'published'
                           ORDER BY deleted_at DESC").Select(r => new
             {
                 date = Str(r["date"]),
@@ -475,7 +504,10 @@ namespace Riqian
             var from = first.ToString("yyyy-MM-dd");
             var to = last.ToString("yyyy-MM-dd");
 
-            var baseWhere = "date>=$f AND date<=$t AND IFNULL(deleted_at,'')=''";
+            /* 第 97 条：储蓄罐的存取不算收支，整节统计都要把它们排除掉。
+               否则用户存一笔钱，饼图里就多出一块「存钱」，星期几/热力图也跟着失真。
+               注意账户余额那里**不能**排除 —— 钱确实从账户出去了。 */
+            var baseWhere = "date>=$f AND date<=$t AND IFNULL(deleted_at,'')='' AND IFNULL(jar_id,'')=''";
             var ba = new (string k, object v)[] { ("$f", from), ("$t", to) };
 
             /* ---- 1. 分类（只算支出；收入分类画饼没意义，用户关心钱花哪了） ---- */
@@ -542,7 +574,8 @@ namespace Riqian
                 var row = Rows($@"SELECT
                         IFNULL(SUM(CASE WHEN kind='out' THEN amount ELSE 0 END),0) AS o,
                         IFNULL(SUM(CASE WHEN kind='in'  THEN amount ELSE 0 END),0) AS i2
-                    FROM ledger WHERE date>=$f AND date<=$t AND IFNULL(deleted_at,'')=''",
+                    FROM ledger WHERE date>=$f AND date<=$t AND IFNULL(deleted_at,'')=''
+                        AND IFNULL(jar_id,'')=''",
                     ("$f", f2), ("$t", t2)).FirstOrDefault();
                 var o = row == null ? 0 : Double(row["o"]);
                 var i2v = row == null ? 0 : Double(row["i2"]);
@@ -557,8 +590,10 @@ namespace Riqian
             }
 
             /* ---- 5. 账户余额占比 ---- */
-            var accounts = Rows(@"SELECT a.id, a.name, IFNULL(a.init,0) + IFNULL((
-                        SELECT SUM(CASE WHEN l.kind='in' THEN l.amount ELSE -l.amount END)
+            /* 余额口径和 LedgerAccounts 必须一致，所以拼同一个常量。
+               这里以前自己写了一份，跟 LedgerAccounts 那份一起漏掉了罐子流水的符号反转。 */
+            var accounts = Rows($@"SELECT a.id, a.name, IFNULL(a.init,0) + IFNULL((
+                        SELECT {AccountDeltaSql}
                         FROM ledger l WHERE l.account_id=a.id AND IFNULL(l.deleted_at,'')=''
                     ),0) AS bal
                 FROM accounts a WHERE IFNULL(a.enabled,1)=1 ORDER BY a.sort, a.created_at")
@@ -597,6 +632,7 @@ namespace Riqian
             var heatMap = new Dictionary<string, double>();
             foreach (var r in Rows(@"SELECT date, IFNULL(SUM(amount),0) AS s FROM ledger
                     WHERE kind='out' AND IFNULL(deleted_at,'')='' AND date>=$f AND date<=$t
+                      AND IFNULL(jar_id,'')=''
                     GROUP BY date", ("$f", gridStart.ToString("yyyy-MM-dd")), ("$t", gridEnd.ToString("yyyy-MM-dd")))
                 ) heatMap[Str(r["date"])] = Double(r["s"]);
             var heat = new List<object>();
@@ -648,6 +684,7 @@ namespace Riqian
                 foreach (var r in Rows($@"SELECT IFNULL(NULLIF(cat,''),'未分类') AS c,
                         IFNULL(SUM(amount),0) AS s FROM ledger
                         WHERE date>=$f AND date<=$t AND IFNULL(deleted_at,'')='' AND kind='out'
+                          AND IFNULL(jar_id,'')=''
                         GROUP BY 1", ("$f", f3), ("$t", t3)))
                     seg[Str(r["c"])] = Double(r["s"]);
 
@@ -737,6 +774,7 @@ namespace Riqian
             foreach (var r in Rows($@"SELECT IFNULL(NULLIF(cat,''),'未分类') AS c,
                     IFNULL(SUM(amount),0) AS s FROM ledger
                     WHERE date>=$f AND date<=$t AND IFNULL(deleted_at,'')='' AND kind='out'
+                    AND IFNULL(jar_id,'')=''
                     GROUP BY 1", ("$f", prevF), ("$t", prevT)))
                 prevCat[Str(r["c"])] = Double(r["s"]);
 

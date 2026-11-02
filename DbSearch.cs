@@ -299,42 +299,210 @@ namespace Riqian
         /// <summary>
         /// 宿主定时器每 30 秒问一次：现在该不该提醒打卡。
         ///
-        /// 三个不发的情况：
-        /// 1. 没开启，或者还没到设定时间
-        /// 2. 今天已经提醒过了（`habitRemindLast` 记的是日期，不是时间戳）
-        /// 3. 今天的习惯已经全打完了 —— 已完成的人不需要被催
+        /// 第 98 条补了三件事，原来只有「到点说一次就走」：
+        ///
+        /// 1. **提前量**（habitRemindLead）。到点才说已经太晚了 ——
+        ///    21:00 才提醒，人可能已经在床上，打卡也无从下手。
+        ///    提前 30 分钟说，还有时间补。
+        /// 2. **间隔重复**（habitRemindEvery）。催一次不理是常态。
+        ///    但也不能没完没了 —— 上限 5 次，之后放弃，
+        ///    不然一晚上响十几次会让人干脆关掉这个功能。
+        /// 3. **提醒方式**（habitRemindHow）。声音 / 静音 / 只标红角标。
+        ///    深夜开声音会吵到人，这个选择必须交给用户。
+        ///
+        /// 不发提醒的四种情况：
+        ///   ① 没开启，或还没到「设定时间 − 提前量」
+        ///   ② 今天的习惯已经全打完了 —— 已完成的人不需要被催
+        ///   ③ 本轮已经催满次数（新一轮从每天 0 点重新计）
+        ///   ④ 距上次提醒还没到间隔
         /// </summary>
         public object HabitRemindTick()
+        {
+            var d = HabitRemindDue();
+            if (d == null) return null;
+
+            /* 只有真要发的时候才记账。原先是"到点就记账"，看似省事，
+               但配合间隔重复会变成：第一次响完就写死，后面几次全被拦掉。
+               记账必须发生在"确实要响"这一刻。 */
+            MetaSet("habitRemindLast", d.today);
+            MetaSet("habitRemindAt2", d.now.ToString("s"));
+            MetaSet("habitRemindN", d.nth.ToString());
+
+            return new
+            {
+                count = d.names.Count,
+                names = d.names.Take(3).ToList(),
+                /* 第几次（从 1 起）。前端拿它决定语气：
+                   第一次好好说，第二次开始加一句"还没打"，越往后越直接。 */
+                nth = d.nth,
+                max = d.max,
+                /* 提醒方式由宿主决定要不要出声 —— 但实际发声在前端（playChime），
+                   所以要把设置带过去，而不是这边偷偷静音。 */
+                how = d.how,
+            };
+        }
+
+        /// <summary>
+        /// 「此刻该不该提醒」的完整判断。抽出来是因为预览也要用它 ——
+        /// 预览如果自己另写一套判断，两边迟早不一致，
+        /// 用户点「看看现在什么情况」得到的答案就不可信了。
+        ///
+        /// 不发提醒的四种情况：
+        ///   ① 没开启，或还没到「设定时间 − 提前量」
+        ///   ② 今天的习惯已经全打完了 —— 已完成的人不需要被催
+        ///   ③ 本轮已经催满次数（新一轮从每天 0 点重新计）
+        ///   ④ 距上次提醒还没到间隔
+        /// </summary>
+        private HabitRemindDecision HabitRemindDue()
         {
             if (Meta("habitRemindOn", "0") != "1") return null;
 
             var at = Meta("habitRemindAt", "21:00");
             if (at.Length < 4) at = "21:00";
             var now = DateTime.Now;
-            var hm = now.ToString("HH:mm");
-            if (string.CompareOrdinal(hm, at) < 0) return null;
+
+            /* 提前量：把「21:00 提醒」理解成「21:00 之前要有时间打完」，
+               所以实际发声时刻是 21:00 − lead。 */
+            var lead = Int(Meta("habitRemindLead", "0"));
+            if (lead < 0) lead = 0;
+            if (lead > 240) lead = 240;      // 提前四小时以上就没意义了，那是另一个功能
+
+            DateTime dueAt;
+            if (!DateTime.TryParse(now.ToString("yyyy-MM-dd") + " " + at, out dueAt))
+                dueAt = now.Date.AddHours(21);
+            dueAt = dueAt.AddMinutes(-lead);
+            if (now < dueAt) return null;
 
             var today = Today;
-            if (Meta("habitRemindLast", "") == today) return null;
 
+            /* 全打完了就早退，并且**不要**记次数 ——
+               否则用户补完卡之后次数还留着，明天一开软件就接着催。 */
             var pending = HabitsPendingToday();
-            // 全打完了也记一笔，免得之后每 30 秒空跑一次
-            MetaSet("habitRemindLast", today);
             if (pending.Count == 0) return null;
 
-            return new { count = pending.Count, names = pending.Take(3).ToList() };
+            /*
+             * 间隔重复。用三个 meta 记：
+             *   habitRemindLast  上次真正发声的日期
+             *   habitRemindAt2   上次真正发声的时刻（算间隔用）
+             *   habitRemindN     今天已经说了几次
+             *
+             * 名字带 2 是因为 habitRemindAt 已经被"设定时间"占用了 ——
+             * 沿用旧 key 会让老用户的设置被悄悄改写，只能在旁边加一个。
+             */
+            var lastDay = Meta("habitRemindLast", "");
+            var lastTs = Meta("habitRemindAt2", "");
+            var times = lastDay == today ? Int(Meta("habitRemindN", "0")) : 0;
+
+            var every = Int(Meta("habitRemindEvery", "0"));
+            if (every < 0) every = 0;
+            if (every > 240) every = 240;
+
+            // every = 0 表示「一天只提醒一次」，保持第 140 条原来的行为
+            var maxTimes = every > 0 ? 5 : 1;
+            if (times >= maxTimes) return null;
+
+            if (times > 0 && every > 0 && lastTs.Length >= 16)
+            {
+                DateTime prev;
+                if (DateTime.TryParse(lastTs, out prev) && (now - prev).TotalMinutes < every) return null;
+            }
+
+            return new HabitRemindDecision
+            {
+                names = pending,
+                nth = times + 1,
+                max = maxTimes,
+                how = Meta("habitRemindHow", "sound"),
+                today = today,
+                now = now,
+            };
+        }
+
+        /** 判断结果。用一个小类而不是匿名元组：字段有六个，元组读起来全是 Item1 */
+        private sealed class HabitRemindDecision
+        {
+            public List<string> names;
+            public int nth;
+            public int max;
+            public string how;
+            public string today;
+            public DateTime now;
+        }
+
+        /// <summary>
+        /// 此刻该不该提醒 —— 只读版本，给自测和「现在什么情况」用。
+        /// 和定时器走同一个判断函数，但**不记账**，所以连着调一百次也不会把额度耗掉。
+        /// </summary>
+        public object HabitRemindCheck()
+        {
+            var d = HabitRemindDue();
+            if (d == null) return new { fire = false, count = 0, nth = 0, max = 0, how = "", names = new List<string>() };
+            return new
+            {
+                fire = true,
+                count = d.names.Count,
+                nth = d.nth,
+                max = d.max,
+                how = d.how,
+                names = d.names.Take(3).ToList(),
+            };
         }
 
         /// <summary>测试 / 预览用：立刻算一次「现在提醒会长什么样」，不看时间也不记账</summary>
         public object HabitRemindPreview()
         {
             var pending = HabitsPendingToday();
+            var at = Meta("habitRemindAt", "21:00");
+            var lead = Int(Meta("habitRemindLead", "0"));
+            var every = Int(Meta("habitRemindEvery", "0"));
+
+            /* 把「实际什么时候会响」直接算出来给用户看。
+               光给三个输入框，用户得自己在脑子里做 21:00 − 30 分钟这种减法，
+               还得再想「间隔 15 分钟会响几次」—— 这不该让他算。 */
+            DateTime dueAt;
+            if (!DateTime.TryParse(DateTime.Today.ToString("yyyy-MM-dd") + " " + at, out dueAt))
+                dueAt = DateTime.Today.AddHours(21);
+            dueAt = dueAt.AddMinutes(-lead);
+
+            var maxTimes = every > 0 ? 5 : 1;
+            var fireAt = new List<string>();
+            for (var i = 0; i < maxTimes; i++)
+                fireAt.Add(dueAt.AddMinutes((long)every * i).ToString("HH:mm"));
+
+            /* 此刻会不会响 —— 用的是和后台定时器**同一个**判断函数，
+               不是另写一套。这样用户点「看看现在什么情况」看到的答案才可信。 */
+            var due = HabitRemindDue();
+
+            var firedToday = Meta("habitRemindLast", "") == Today ? Int(Meta("habitRemindN", "0")) : 0;
+
+            /* 不响的原因要说清楚。「不会响」这三个字对用户毫无帮助 ——
+               他需要知道是没开、打完了、还没到点，还是次数用完了。 */
+            string why = "";
+            if (due == null)
+            {
+                if (Meta("habitRemindOn", "0") != "1") why = "提醒没开启";
+                else if (pending.Count == 0) why = "今天的卡都打完了，不用提醒";
+                else if (DateTime.Now < dueAt) why = $"还没到点，{dueAt:HH:mm} 才会响";
+                else if (firedToday >= maxTimes) why = $"今天已经提醒 {maxTimes} 次了，不再打扰";
+                else why = $"距上次提醒还不到 {every} 分钟";
+            }
+
             return new
             {
                 count = pending.Count,
                 names = pending.Take(5).ToList(),
                 on = Meta("habitRemindOn", "0") == "1",
-                at = Meta("habitRemindAt", "21:00"),
+                at,
+                lead,
+                every,
+                how = Meta("habitRemindHow", "sound"),
+                /** 今天已经响过几次 */
+                todayTimes = firedToday,
+                maxTimes,
+                fireAt,
+                /** 现在这一刻会不会响，以及为什么不会 */
+                nowWillFire = due != null,
+                why,
             };
         }
     }

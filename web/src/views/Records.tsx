@@ -179,6 +179,7 @@ export function RecordsView() {
             <button className={`seg-b ${mode === 'line' ? 'on' : ''}`} onClick={() => setMode('line')}>时间轴</button>
           </div>
         }
+        lock={{ scope: 'records', label: '记录搜索' }}
       />
       <div className="wrap">
         {mode === 'line' ? <TimelineView embedded /> : (

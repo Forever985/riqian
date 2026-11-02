@@ -60,11 +60,23 @@ export function useContextMenu() {
     if (!state || !boxRef.current) return;
     const el = boxRef.current;
     const r = el.getBoundingClientRect();
-    const pad = 8;
+    const pad = 12; // 和 .ctxmenu 的 max-height:calc(100dvh - 24px) 保持一致
     let x = state.x;
     let y = state.y;
     if (x + r.width + pad > window.innerWidth) x = Math.max(pad, window.innerWidth - r.width - pad);
-    if (y + r.height + pad > window.innerHeight) y = Math.max(pad, window.innerHeight - r.height - pad);
+    /*
+     * 竖直方向有个坑：菜单可能比视口还高（待办那条 19 项，实测 743px vs 736px 视口）。
+     * 那种情况下 `innerHeight - r.height - pad` 是负数，被 Math.max 兜成 pad，
+     * 结果菜单从顶部开始往下长，底部照样出界。
+     *
+     * 而且这一轮量到的 r.height 是"理想高度"：CSS 的 max-height 是之后才把高度压下来的。
+     * 所以先按"最终最多能有多高"算一个上限，再夹 y：
+     * 剩下的溢出交给 max-height + overflow:auto，位置不会再被算飞。
+     */
+    const capH = Math.min(r.height, window.innerHeight - pad * 2);
+    const maxTop = Math.max(pad, window.innerHeight - pad - capH);
+    if (y > maxTop) y = maxTop;
+    if (y < pad) y = pad;
     if (x !== pos.x || y !== pos.y) setPos({ x, y });
     // 只跟着「打开」这件事算位置；pos 不进依赖，否则自己触发自己
     // eslint-disable-next-line react-hooks/exhaustive-deps

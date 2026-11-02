@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { Icon } from './Icons';
+import { useDragSort } from './DragSort';
 
 export interface OrderItem { k: string; n: string }
 
@@ -8,6 +9,11 @@ export interface OrderItem { k: string; n: string }
  * 通用「顺序编辑器」。
  * 导航、个人中心、设置页三处的排序都用它 —— 之前导航一份、模块一份、设置没有，
  * 结果就是「有的地方能调、有的地方根本找不到」，第 53/54 条说的就是这个。
+ *
+ * #169：用户原话「导航顺序不能拖动了，只能点上下了，这不好」。
+ * 原来那个 `≡` 手柄纯粹是个装饰 —— 看着像能拖，一拖什么都不发生。
+ * 这比没有手柄更糟：它让人以为程序坏了。现在真接上拖动，上下箭头保留
+ * （键盘用户和"只想挪一格"时，点一下比拖一段准）。
  */
 export function OrderEditor({
   items, settingKey, hint, labelOf,
@@ -38,18 +44,36 @@ export function OrderEditor({
     void commit(next);
   };
 
+  const drag = useDragSort({
+    keys: order,
+    onReorder: (from, to) => {
+      if (from === to) return;
+      const next = order.slice();
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      void commit(next);
+    },
+  });
+
   const nameOf = (k: string) => labelOf?.(k) || items.find((x) => x.k === k)?.n || k;
 
   return (
-    <div className="orderlist">
-      {order.map((k, i) => (
-        <div className="orow" key={k}>
-          <span className="grip">≡</span>
-          <span className="nm">{nameOf(k)}</span>
-          <button className="btn sm ghost" data-act="up" onClick={() => move(i, -1)} disabled={i === 0} title="上移">↑</button>
-          <button className="btn sm ghost" data-act="down" onClick={() => move(i, 1)} disabled={i === order.length - 1} title="下移">↓</button>
-        </div>
-      ))}
+    <div className="orderlist" ref={drag.boxRef} data-act="orderlist">
+      {order.map((k, i) => {
+        const dp = drag.props(i);
+        return (
+          <div
+            key={k}
+            {...dp}
+            className={`orow ${dp.className}`}
+          >
+            <span className="grip" title="按住拖动能调整顺序">≡</span>
+            <span className="nm">{nameOf(k)}</span>
+            <button className="btn sm ghost" data-act="up" onClick={() => move(i, -1)} disabled={i === 0} title="上移">↑</button>
+            <button className="btn sm ghost" data-act="down" onClick={() => move(i, 1)} disabled={i === order.length - 1} title="下移">↓</button>
+          </div>
+        );
+      })}
       <div className="row" style={{ marginTop: 10 }}>
         <button
           className="btn sm"

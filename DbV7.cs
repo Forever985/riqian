@@ -212,7 +212,8 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
         public object Notes(string notebookId, string q, int limit)
         {
             if (limit <= 0) limit = 300;
-            var sql = "SELECT id,notebook_id,title,plain,pinned,created_at,updated_at,rev,IFNULL(sort,0) AS sort FROM notes WHERE deleted_at IS NULL";
+            var sql = "SELECT id,notebook_id,title,plain,pinned,created_at,updated_at,rev,IFNULL(sort,0) AS sort,"
+                + "IFNULL(color,'') AS color,IFNULL(icon,'') AS icon FROM notes WHERE deleted_at IS NULL";
             var ps = new List<(string, object)>();
             if (!string.IsNullOrEmpty(notebookId)) { sql += " AND notebook_id=$n"; ps.Add(("$n", notebookId)); }
             if (!string.IsNullOrEmpty(q)) { sql += " AND (title LIKE $q OR plain LIKE $q)"; ps.Add(("$q", "%" + q + "%")); }
@@ -229,6 +230,9 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
                 chars = Str(r["plain"]).Replace(" ", "").Length,
                 /* 第 230 条：手动排序要用到 */
                 sort = Int(r["sort"]),
+                /* 第 128 条：单篇的颜色 / 图标，空串 = 跟随笔记本 */
+                color = Str(r["color"]),
+                icon = Str(r["icon"]),
             }).ToList();
         }
 
@@ -247,25 +251,39 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
                 pinned = Int(r["pinned"]),
                 createdAt = Str(r["created_at"]),
                 updatedAt = Str(r["updated_at"]),
+                color = HasCol(r, "color") ? Str(r["color"]) : "",
+                icon = HasCol(r, "icon") ? Str(r["icon"]) : "",
             };
         }
 
-        public object NoteSave(string id, string notebookId, string title, string body, int pinned)
+        /// <summary>老库在 ALTER 加列之前读出来没有这个键，直接取会抛 KeyNotFound</summary>
+        private static bool HasCol(Dictionary<string, object> r, string name) => r != null && r.ContainsKey(name);
+
+        public object NoteSave(string id, string notebookId, string title, string body, int pinned,
+            string color = null, string icon = null)
         {
             var plain = StripHtml(body ?? "");
             if (string.IsNullOrEmpty(id))
             {
                 id = NewId();
-                Exec(@"INSERT INTO notes(id,notebook_id,title,body,plain,pinned,created_at,updated_at,rev)
-                       VALUES($i,$n,$t,$b,$p,$pin,$c,$c,1)",
+                Exec(@"INSERT INTO notes(id,notebook_id,title,body,plain,pinned,created_at,updated_at,rev,color,icon)
+                       VALUES($i,$n,$t,$b,$p,$pin,$c,$c,1,$col,$ic)",
                     ("$i", id), ("$n", notebookId ?? ""), ("$t", title ?? ""), ("$b", body ?? ""),
-                    ("$p", plain), ("$pin", pinned), ("$c", Now));
+                    ("$p", plain), ("$pin", pinned), ("$c", Now),
+                    ("$col", color ?? ""), ("$ic", icon ?? ""));
                 Touch("notes", id, "ins", 1, title);
             }
             else
             {
+                /*
+                 * 第 128 条：color / icon 传 null 表示「这次不动它」。
+                 * 为什么要区分 null 和空串：自动保存每几秒就来一次，只带了正文，
+                 * 如果 null 也当空串写进去，用户刚选的色点就被下一轮自动保存抹掉了。
+                 */
                 Exec(@"UPDATE notes SET notebook_id=$n,title=$t,body=$b,plain=$p,pinned=$pin,updated_at=$c,rev=rev+1 WHERE id=$i",
                     ("$n", notebookId ?? ""), ("$t", title ?? ""), ("$b", body ?? ""), ("$p", plain), ("$pin", pinned), ("$c", Now), ("$i", id));
+                if (color != null) Exec("UPDATE notes SET color=$v WHERE id=$i", ("$v", color), ("$i", id));
+                if (icon != null) Exec("UPDATE notes SET icon=$v WHERE id=$i", ("$v", icon), ("$i", id));
                 Touch("notes", id, "upd", 1, title);
             }
             return new { ok = true, id, plain, chars = plain.Replace(" ", "").Length };
@@ -610,7 +628,10 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
                 pomoPresets = Str(Scalar("SELECT v FROM meta WHERE k='pomoPresets'")),
             };
             var path = Path.Combine(ExportDir, "日签设置-" + Today + ".json");
-            File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+            /* Encoding.UTF8 会写 BOM（EF BB BF），而 System.Text.Json 的 Parse
+               不接受 BOM —— 于是导出的文件永远导不回来。用 new UTF8Encoding(false)
+               明确写"不要 BOM"。这是导入功能彻底失效的根因，不只是"丢 modules"。 */
+            File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
             return new { ok = true, path, count = d.Count };
         }
 
@@ -619,18 +640,100 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
             if (string.IsNullOrWhiteSpace(json)) return new { ok = false, err = "内容为空" };
             try
             {
+                /* 容忍 BOM：老版本导出的文件头上有 EF BB BF，
+                   System.Text.Json 见到第一个字节是 0xEF 会直接报
+                   "'0xEF' is an invalid start of a value"，用户手里已有的导出文件就全废了。
+                   用 MainForm 里那个统一入口，别在这儿再写一遍 TrimStart ——
+                   同一个坑踩两次，就是因为当初只在一处写、另一处漏了。 */
+                json = MainForm.StripJsonPreamble(json);
+                if (json.Length == 0) return new { ok = false, err = "内容为空" };
+
                 using var doc = JsonDocument.Parse(json);
                 if (!doc.RootElement.TryGetProperty("settings", out var st))
                     return new { ok = false, err = "不是「日签」的设置文件" };
+
+                /* 能整块覆盖的字段：先备份，出任何岔子都能整体退回去。
+                   导入是个"一步改一堆东西"的操作，中途炸掉会留下半新半旧的配置，
+                   比彻底失败更难收拾。 */
+                var backup = new Dictionary<string, string>();
+                foreach (var r in Rows("SELECT k,v FROM meta")) backup[Str(r["k"])] = Str(r["v"]);
+
                 int n = 0;
-                foreach (var p in st.EnumerateObject())
+                int modN = 0;
+                try
                 {
-                    var k = p.Name;
-                    if (k == "deviceId" || k.StartsWith("vaultMain")) continue;
-                    Exec("INSERT OR REPLACE INTO meta(k,v) VALUES($k,$v)", ("$k", k), ("$v", p.Value.GetString() ?? ""));
-                    n++;
+                    foreach (var p in st.EnumerateObject())
+                    {
+                        var k = p.Name;
+                        if (k == "deviceId" || k.StartsWith("vaultMain")) continue;
+                        Exec("INSERT OR REPLACE INTO meta(k,v) VALUES($k,$v)", ("$k", k), ("$v", p.Value.GetString() ?? ""));
+                        n++;
+                    }
+
+                    /* modules 这块以前被静默丢掉了：
+                       SettingsExport 明明写进了文件，SettingsImport 却只读 settings 一项，
+                       用户换机器导入设置，模块顺序和开关全没了，而且没有任何提示。
+                       现在按 type 做 upsert —— 不按 id，因为 id 是本机生成的，
+                       导进来的 id 换台机器就没意义，同 type 的模块也不该出现两份。 */
+                    if (doc.RootElement.TryGetProperty("modules", out var mods)
+                        && mods.ValueKind == JsonValueKind.Array)
+                    {
+                        int sortSeq = 0;
+                        foreach (var m in mods.EnumerateArray())
+                        {
+                            sortSeq += 10;
+                            var type = m.TryGetProperty("type", out var tx) ? (tx.GetString() ?? "") : "";
+                            if (string.IsNullOrWhiteSpace(type)) continue;
+
+                            var title = m.TryGetProperty("title", out var ti) ? (ti.GetString() ?? "") : "";
+                            var enabled = 1;
+                            if (m.TryGetProperty("enabled", out var en))
+                            {
+                                if (en.ValueKind == JsonValueKind.Number) enabled = en.TryGetInt32(out var ei) ? (ei != 0 ? 1 : 0) : 1;
+                                else if (en.ValueKind == JsonValueKind.True) enabled = 1;
+                                else if (en.ValueKind == JsonValueKind.False) enabled = 0;
+                            }
+                            var config = m.TryGetProperty("config", out var cf) && cf.ValueKind != JsonValueKind.Null
+                                ? (cf.ValueKind == JsonValueKind.String ? (cf.GetString() ?? "{}") : cf.GetRawText())
+                                : "{}";
+                            var sort = m.TryGetProperty("sort", out var so) && so.TryGetInt32(out var si) ? si : sortSeq;
+
+                            // 本机已经有同类型的模块 → 覆盖它的标题/开关/配置，不新增一条
+                            var exist = Str(Scalar("SELECT id FROM modules WHERE type=$t LIMIT 1", ("$t", type)));
+                            if (!string.IsNullOrEmpty(exist))
+                            {
+                                Exec("UPDATE modules SET title=$ti, enabled=$e, sort=$s, config=$c WHERE id=$i",
+                                    ("$ti", title), ("$e", enabled), ("$s", sort), ("$c", config), ("$i", exist));
+                            }
+                            else
+                            {
+                                Exec("INSERT INTO modules(id,type,title,enabled,sort,config) VALUES($i,$t,$ti,$e,$s,$c)",
+                                    ("$i", NewId()), ("$t", type), ("$ti", title),
+                                    ("$e", enabled), ("$s", sort), ("$c", config));
+                            }
+                            modN++;
+                        }
+                    }
+
+                    // pomoPresets 平时就在 meta 里，跟着 settings 一起进来了；
+                    // 但老版本的导出把它单独放在顶层，所以这里兼容补一次
+                    if (doc.RootElement.TryGetProperty("pomoPresets", out var pp)
+                        && pp.ValueKind == JsonValueKind.String
+                        && Scalar("SELECT v FROM meta WHERE k='pomoPresets'") == null)
+                    {
+                        Exec("INSERT OR REPLACE INTO meta(k,v) VALUES('pomoPresets',$v)",
+                            ("$v", pp.GetString() ?? ""));
+                    }
                 }
-                return new { ok = true, count = n };
+                catch
+                {
+                    // 半路失败 → 把 meta 整体还原，别留一半新一半旧
+                    foreach (var kv in backup)
+                        Exec("INSERT OR REPLACE INTO meta(k,v) VALUES($k,$v)", ("$k", kv.Key), ("$v", kv.Value));
+                    throw;
+                }
+
+                return new { ok = true, count = n, modules = modN };
             }
             catch (Exception e) { return new { ok = false, err = e.Message }; }
         }

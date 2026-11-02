@@ -135,27 +135,65 @@ namespace Riqian
 
         private static string ResolveRoot()
         {
+            var fallback = Directory.Exists(@"E:\")
+                ? @"E:\日签"
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "日签日记");
+
+            /* 本次要不要把 fallback 写回配置文件？
+               只有"配置本来就不存在"或"配置确实坏了"才该写。
+               如果配置里明明有个好路径，只是这会儿盘没插上，
+               写完就等于把用户的路径永久改掉了，插回盘也找不回来。 */
+            var rewriteConfig = true;
+
             try
             {
                 if (File.Exists(ConfigFile))
                 {
-                    var cfg = JsonSafe(File.ReadAllText(ConfigFile));
+                    var raw = File.ReadAllText(ConfigFile);
+                    var cfg = JsonSafe(raw);
                     if (cfg.HasValue && cfg.Value.TryGetProperty("root", out var r))
                     {
                         var s = r.GetString();
-                        if (!string.IsNullOrWhiteSpace(s)) { Directory.CreateDirectory(s); return s; }
+                        /* 配了路径就按配的走，但目录建不出来时不能假装成功 ——
+                           原来 Directory.CreateDirectory 抛一下就被外层 catch 吞了，
+                           然后默默回落到默认目录，用户会以为"数据丢了"。
+                           盘符拔了、外置硬盘没插、网络盘掉线，都属于这种情况。 */
+                        if (!string.IsNullOrWhiteSpace(s))
+                        {
+                            try
+                            {
+                                Directory.CreateDirectory(s);
+                                return s;
+                            }
+                            catch (Exception ex)
+                            {
+                                /* 路径是好的，只是暂时够不着 —— 保留配置，本次用默认目录顶着。
+                                   下次插回盘再启动，还会回到用户配的那个目录。 */
+                                rewriteConfig = false;
+                                Diag.Error("app.config",
+                                    $"配置里的数据目录暂时不可用：{s}（本次先用 {fallback}，原配置保持不变，下次启动会再试）", ex);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        /*
+                         * 文件在，但读不出 root。这一定是有人手工改坏了（用记事本存成了别的编码之类）。
+                         * 绝不能拿默认路径 SaveConfig 覆盖掉它 —— 那等于把用户的配置抹了，
+                         * 下次启动就永远去默认目录找库，而真正的库还在老地方。
+                         * 原文件另存一份 .bak，然后才用默认值。
+                         */
+                        var bak = ConfigFile + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                        try { File.Copy(ConfigFile, bak, true); } catch { }
+                        Diag.Error("app.config",
+                            $"配置文件读不出 root，已另存为 {bak}，本次先使用默认目录 {fallback}", null);
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Diag.Error("app.config", "读配置文件失败", ex); }
 
-            // 默认放 E 盘子目录；没有 E 盘就退回文档
-            string root;
-            if (Directory.Exists(@"E:\")) root = @"E:\日签";
-            else root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "日签日记");
-
-            SaveConfig(root);
-            return root;
+            if (rewriteConfig) SaveConfig(fallback);
+            return fallback;
         }
 
         private static void SaveConfig(string root)
@@ -170,11 +208,29 @@ namespace Riqian
             catch { }
         }
 
+        /// <summary>
+        /// 把文本里所有"看不见但会让 JSON 解析器直接报错"的前缀去掉。
+        ///
+        /// 最主要的是 BOM（U+FEFF）。用记事本、旧版 PowerShell 的 Out-File、
+        /// 以及 .NET 的 Encoding.UTF8 写出来的文件，开头都会带这三个字节。
+        /// System.Text.Json 见到它第一个字节是 0xEF 就直接抛
+        /// "'0xEF' is an invalid start of a value"，连内容都不看。
+        ///
+        /// 这个函数是**唯一**该做这件事的地方 —— 任何读用户/外部文件的入口都调它，
+        /// 别在每个调用点各写一遍 TrimStart。设置导入就是因为只在导出侧管了 BOM、
+        /// 导入侧没管，"导出再导入"这条路断了很久没人发现。
+        /// </summary>
+        internal static string StripJsonPreamble(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text ?? "";
+            return text.TrimStart('\uFEFF', '\u200B', '\u00A0', ' ', '\t', '\r', '\n');
+        }
+
         private static JsonElement? JsonSafe(string text)
         {
             try
             {
-                using var d = JsonDocument.Parse(text);
+                using var d = JsonDocument.Parse(StripJsonPreamble(text));
                 return d.RootElement.Clone();
             }
             catch { return null; }
@@ -214,23 +270,26 @@ namespace Riqian
             "cache.clear", "cache.open", "cache.prune", "cache.stats",
             "cd.add", "cd.delete", "cd.list", "cd.purge",
             "cd.repeat", "cd.restore", "cd.trash", "cd.update",
-            "diag.action", "diag.api", "diag.apiInfo", "diag.config",
-            "diag.frontend", "diag.logs", "diag.method", "diag.methods",
-            "diag.openDir", "diag.ping", "diag.stats", "draft.purge",
-            "draft.restore", "draft.trash", "draft.trashList", "draw.delete",
-            "draw.get", "draw.list", "draw.rename", "draw.restore",
-            "draw.save", "draw.toMedia", "draw.trash", "encourage.delete",
-            "encourage.list", "encourage.save", "entry.bg", "entry.delete",
-            "entry.drafts", "entry.fav", "entry.get", "entry.list",
-            "entry.publish", "entry.save", "entry.status", "export.csv",
-            "export.html", "export.json", "export.md", "export.note",
-            "feedback.save", "festival.add", "festival.day", "festival.delete",
-            "festival.lunar", "festival.month", "festival.remindPreview", "festival.upcoming",
-            "font.bytes", "font.delete", "font.import", "font.list",
-            "habit.add", "habit.delete", "habit.history", "habit.log",
-            "habit.logs", "habit.notes", "habit.purge", "habit.remindPreview",
-            "habit.reorder", "habit.restore", "habit.stats", "habit.trash",
-            "habit.update", "habits.list", "hotkey.apply", "ledger.accounts",
+            "diag.action", "diag.api", "diag.apiInfo", "diag.checkpoint",
+            "diag.config", "diag.frontend", "diag.logs", "diag.method",
+            "diag.methods", "diag.openDir", "diag.ping", "diag.stats",
+            "draft.purge", "draft.restore", "draft.trash", "draft.trashList",
+            "draw.delete", "draw.get", "draw.list", "draw.rename",
+            "draw.restore", "draw.save", "draw.toMedia", "draw.trash",
+            "encourage.delete", "encourage.list", "encourage.save", "entry.bg",
+            "entry.delete", "entry.drafts", "entry.fav", "entry.get",
+            "entry.list", "entry.publish", "entry.save", "entry.status",
+            "export.csv", "export.html", "export.json", "export.md",
+            "export.note", "feedback.save", "festival.add", "festival.day",
+            "festival.delete", "festival.lunar", "festival.month", "festival.remindPreview",
+            "festival.upcoming", "font.bytes", "font.delete", "font.import",
+            "font.list", "habit.add", "habit.delete", "habit.history",
+            "habit.log", "habit.logs", "habit.notes", "habit.purge",
+            "habit.remindCheck", "habit.remindPreview", "habit.reorder", "habit.restore",
+            "habit.stats", "habit.trash", "habit.update", "habits.list",
+            "hotkey.apply", "jar.add", "jar.archive", "jar.delete",
+            "jar.deposit", "jar.detail", "jar.list", "jar.presets",
+            "jar.removeItem", "jar.reorder", "jar.update", "ledger.accounts",
             "ledger.add", "ledger.catDrop", "ledger.catRename", "ledger.delete",
             "ledger.insight", "ledger.list", "ledger.recur.delete", "ledger.recur.list",
             "ledger.recur.run", "ledger.recur.save", "ledger.update", "link.add",
@@ -256,9 +315,10 @@ namespace Riqian
             "rev.restore", "review.day", "review.range", "search.all",
             "setting.set", "settings.export", "settings.import", "share.copyImage",
             "share.copyText", "share.html", "share.image", "shell.apply",
-            "shell.autostart", "shell.autostartGet", "shell.hotkeyState", "shell.openUrl",
-            "stats.calMonths", "stats.calendar", "stats.overview", "stats.rank",
-            "stats.rankExtra", "stats.reset", "summary.delete", "summary.get",
+            "shell.autostart", "shell.autostartGet", "shell.hotkeyState", "shell.lockState",
+            "shell.openUrl", "stats.calMonths", "stats.calendar", "stats.overview",
+            "stats.rank", "stats.rankExtra", "stats.reset", "sticky.close",
+            "sticky.list", "sticky.open", "summary.delete", "summary.get",
             "summary.list", "summary.pin", "summary.save", "tag.set",
             "tags.list", "template.apply", "templates.delete", "templates.list",
             "templates.save", "todo.add", "todo.clearDone", "todo.delete",
@@ -495,7 +555,7 @@ namespace Riqian
                 /* 倒计时 */
                 case "cd.list": return db.Countdowns();
                 case "cd.add": return db.CdAdd(S(a, "title"), S(a, "date"), I(a, "yearly", 0), S(a, "color"), S(a, "note"));
-                case "cd.update": return db.CdUpdate(S(a, "id"), S(a, "title"), S(a, "date"), I(a, "yearly", -1), S(a, "color"), S(a, "note"), I(a, "sort", -1), S(a, "repeat"));
+                case "cd.update": return db.CdUpdate(S(a, "id"), S(a, "title"), S(a, "date"), I(a, "yearly", -1), S(a, "color"), S(a, "note"), I(a, "sort", -1), S(a, "repeat"), I(a, "star", -1));
                 case "cd.delete": return db.CdDelete(S(a, "id"));
                 case "cd.trash": return db.CdTrash();
                 case "cd.restore": return db.CdRestore(S(a, "id"));
@@ -560,7 +620,7 @@ namespace Riqian
                     }
 
                 /* 统计 */
-                case "stats.overview": return db.Overview();
+                case "stats.overview": return db.Overview(SN(a, "from"), SN(a, "to"));
                 case "stats.calendar": return db.Calendar(S(a, "ym"));
                 /* 第 157 条：重置统计（只清番茄/打卡记录，日记绝不动） */
                 case "stats.reset": return db.StatsReset(S(a, "what", "all"));

@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { Topbar, Dialog } from '../components/ui';
 import { Icon } from '../components/Icons';
 import { SortBar, type SortDir, type SortOption } from '../components/SortBar';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { cnDateLabel, todayKey } from '../lib/date';
 import type { DraftItem } from '../types';
 
@@ -104,32 +105,88 @@ export function DraftsView() {
   const allPicked = rows.length > 0 && picked.length === rows.length;
 
   const moveToTrash = async (date: string) => {
-    await api.drafts.trash(date);
-    setPicked((p) => p.filter((x) => x !== date));
-    await load();
-    toast('已移到回收站，还能捡回来');
+    /* 以前这里没有 try：后端一报错就变成没人接的 Promise 拒绝，
+       界面上什么提示都没有，用户点完只看到列表没变，不知道是坏了还是没点中。 */
+    try {
+      await api.drafts.trash(date);
+      setPicked((p) => p.filter((x) => x !== date));
+      await load();
+      toast('已移到回收站，还能捡回来');
+    } catch (e) {
+      toast('没删掉：' + (e as Error).message);
+    }
   };
 
   const publishOne = async (date: string) => {
-    await api.entry.publish(date, true);
-    setPicked((p) => p.filter((x) => x !== date));
-    await load();
-    toast('已定稿');
+    try {
+      await api.entry.publish(date, true);
+      setPicked((p) => p.filter((x) => x !== date));
+      await load();
+      toast('已定稿');
+    } catch (e) {
+      toast('没定稿：' + (e as Error).message);
+    }
   };
 
   /* 批量操作：选了几条就一起做，不用一条条点 */
   const bulk = async (act: 'publish' | 'trash') => {
     if (!picked.length) return;
     const ids = picked.slice();
+    let done = 0;
+    let firstErr = '';
     for (const d of ids) {
       try {
         if (act === 'trash') await api.drafts.trash(d);
         else await api.entry.publish(d, true);
-      } catch { /* 单条失败不影响其它 */ }
+        done++;
+      } catch (e) {
+        /* 单条失败不该拖垮整批，但必须记下失败数 ——
+           以前是吞掉异常后照样报「N 篇已移到回收站」，
+           一本都没成功也说成功，比直接报错更糟。 */
+        if (!firstErr) firstErr = (e as Error).message;
+      }
     }
     setPicked([]);
     await load();
-    toast(act === 'trash' ? `${ids.length} 篇已移到回收站` : `${ids.length} 篇已定稿`);
+    const word = act === 'trash' ? '移到回收站' : '定稿';
+    if (done === ids.length) toast(`${done} 篇已${word}`);
+    else if (done === 0) toast(`${done} 篇成功，全部失败：${firstErr}`);
+    else toast(`${done} 篇已${word}，${ids.length - done} 篇失败：${firstErr}`);
+  };
+
+  /*
+   * 第 235 条：草稿箱的右键菜单。
+   *
+   * 页面上给的是「定稿 / 扔进回收站 / 打开」三个图标按钮，
+   * 已经很挤了，再加按钮就会变成一排小图标。
+   * 右键里放那些"不常用但确实需要"的：
+   *   · 打开继续写（页面上有，但用文字说一遍更清楚）
+   *   · 勾选/取消勾选（想批量删几篇的时候，一条条点勾选框很烦）
+   *   · 复制日期
+   * 这比再塞三个按钮好。
+   */
+  const ctx = useContextMenu();
+
+  const togglePick = (date: string) => {
+    setPicked((p) => (p.includes(date) ? p.filter((x) => x !== date) : [...p, date]));
+  };
+
+  const menuFor = (d: DraftItem): MenuItem[] => {
+    const on = picked.includes(d.date);
+    return [
+      { label: '打开继续写', onClick: async () => { await setDate(d.date); await go('today'); } },
+      { label: '直接定稿', onClick: () => void publishOne(d.date) },
+      { sep: true },
+      { label: on ? '取消勾选' : '勾选这一篇', onClick: () => togglePick(d.date) },
+      { label: '复制日期', onClick: () => { void navigator.clipboard?.writeText(d.date).then(() => {}, () => {}); } },
+      { sep: true },
+      {
+        label: '移到回收站',
+        danger: true,
+        confirm: `把 ${d.date} 这篇草稿移到回收站？还能捡回来。`,
+        onClick: () => void moveToTrash(d.date),
+      },
+    ];
   };
 
   return (
@@ -143,6 +200,7 @@ export function DraftsView() {
           </button>
           <button className="btn sm" onClick={() => void load()}><Icon name="refresh" size={13} />刷新</button>
         </>}
+        lock={{ scope: 'drafts', label: '草稿箱' }}
       />
       <div className="wrap">
         <div className="card drill-tools">
@@ -200,7 +258,9 @@ export function DraftsView() {
               : rows.map((d) => {
                 const on = picked.includes(d.date);
                 return (
-                  <div className="draft-row" key={d.date} data-date={d.date}>
+                  <div className="draft-row" key={d.date} data-date={d.date}
+                    onContextMenu={(e) => ctx.open(e, menuFor(d))}
+                  >
                     <button
                       className={`pickbox ${on ? 'on' : ''}`}
                       style={{ position: 'static', flex: '0 0 auto' }}
@@ -274,6 +334,10 @@ export function DraftsView() {
           ))}
         </Dialog>
       ) : null}
+
+      {/* 第 235 条：草稿行的右键菜单挂点。
+          放最后是因为它是浮层，位置由 CSS 的 fixed 决定，跟兄弟节点的顺序无关。 */}
+      {ctx.node}
     </>
   );
 }

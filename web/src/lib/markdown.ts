@@ -1,5 +1,6 @@
 /** 极简 Markdown → HTML（Typora 式即时预览用，够用就好） */
 import { imgUrl } from './media';
+import { bbInline } from './bbcode';
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
 
@@ -13,6 +14,18 @@ export function mdToHtml(md: string): string {
 
   const inline = (src: string) => {
     let s = esc(src);
+    /*
+     * #144：一个输入框里同时认两种写法。
+     *
+     * 用户原话：「我希望一个输入框，无须切换就能同时用」。原来的做法是
+     * rich / md / bb 三选一，切过去等于换一份内容 —— 想粘一段论坛里的
+     * BBCode 进 Markdown 日记，得先切模式，回来还得再切回来。
+     *
+     * 这里在**转义之后、Markdown 之前**先把 BBCode 标签换成 HTML。
+     * 顺序很关键：BBCode 的 `[b]` 里可能含 `*`，先跑 Markdown 会把
+     * `[b]*粗斜*[/b]` 搅成一团；先换掉标签，里面的内容再走 Markdown 就正好。
+     */
+    s = bbInline(s);
     s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt: string, href: string) => {
       const url = href.startsWith('http') || href.startsWith('file') ? href : imgUrl(href);
       return `<img src="${url}" alt="${alt}">`;

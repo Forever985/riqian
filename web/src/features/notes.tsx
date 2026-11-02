@@ -139,6 +139,13 @@ export function NewNoteDialog({
   const [nbId, setNbId] = useState(first);
   const [newName, setNewName] = useState('');
   const [color, setColor] = useState(books.find((b) => b.id === first)?.color || NOTE_COLORS[0]);
+  /*
+   * 第 128 条：这篇笔记**自己**的标识，独立于笔记本颜色。
+   * 早先这个对话框里那个调色板改的其实是笔记本颜色 —— 用户以为在给笔记选色，
+   * 一选整本都变了。所以这里拆成两个：`color` 管笔记本，`markColor` 管这一篇。
+   */
+  const [markColor, setMarkColor] = useState('');
+  const [markIcon, setMarkIcon] = useState('');
   const [tpl, setTpl] = useState('blank');
   const [busy, setBusy] = useState(false);
 
@@ -164,7 +171,11 @@ export function NewNoteDialog({
         if (cur && cur.color !== color) await api.notebooks.update({ id: bookId, color });
       }
       const body = NOTE_TEMPLATES.find((x) => x.key === tpl)?.body || '';
-      const r = await api.notes.save({ id: '', notebookId: bookId, title: t, body, pinned: 0 });
+      const r = await api.notes.save({
+        id: '', notebookId: bookId, title: t, body, pinned: 0,
+        /* 第 128 条：新建时就把标识写进去，不用建完再去改一次 */
+        color: markColor, icon: markIcon,
+      });
       onCreated(r.id);
       onClose();
     } catch (e) {
@@ -220,7 +231,7 @@ export function NewNoteDialog({
       </div>
 
       <div className="field" style={{ marginBottom: 12 }}>
-        <label>颜色<span className="small muted" style={{ marginLeft: 6 }}>（记在笔记本上，左栏的圆点）</span></label>
+        <label>笔记本颜色<span className="small muted" style={{ marginLeft: 6 }}>（记在笔记本上，左栏的圆点）</span></label>
         <div className="row" style={{ gap: 7 }}>
           {NOTE_COLORS.map((c) => (
             <span
@@ -232,6 +243,50 @@ export function NewNoteDialog({
                 border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
               }}
             />
+          ))}
+        </div>
+      </div>
+
+      {/* 第 128 条：这一篇自己的颜色 / 图标 —— 用户原来抱怨的就是缺这个 */}
+      <div className="field" style={{ marginBottom: 12 }}>
+        <label>
+          这篇笔记的颜色
+          <span className="small muted" style={{ marginLeft: 6 }}>（只在列表里给这一篇做标记）</span>
+        </label>
+        <div className="row" style={{ gap: 7, marginBottom: 8 }}>
+          <span
+            onClick={() => setMarkColor('')}
+            title="跟随笔记本"
+            style={{
+              width: 24, height: 24, borderRadius: '50%', cursor: 'pointer', boxSizing: 'border-box',
+              background: color || 'var(--panel2)',
+              border: `2px dashed ${!markColor ? 'var(--ink)' : 'var(--line)'}`,
+            }}
+          />
+          {NOTE_COLORS.map((c) => (
+            <span
+              key={c}
+              onClick={() => setMarkColor(c)}
+              title={c}
+              style={{
+                width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
+                boxSizing: 'border-box',
+                border: `2px solid ${markColor === c ? 'var(--ink)' : 'transparent'}`,
+              }}
+            />
+          ))}
+        </div>
+        <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+          {NOTE_ICONS.map((it) => (
+            <button
+              key={it.k || 'none'}
+              className={`btn sm ghost ${markIcon === it.k ? 'primary' : ''}`}
+              title={it.n}
+              style={{ padding: '3px 6px', minWidth: 28 }}
+              onClick={() => setMarkIcon(it.k)}
+            >
+              {it.k ? <Icon name={it.k as never} size={13} /> : <span style={{ fontSize: 11 }}>无</span>}
+            </button>
           ))}
         </div>
       </div>
@@ -253,6 +308,129 @@ export function NewNoteDialog({
         </div>
       </div>
     </Dialog>
+  );
+}
+
+/* ---------------- 第 128 条：笔记自己的颜色 / 图标 ---------------- */
+
+/**
+ * 单篇笔记的色点。
+ *
+ * 为什么不是「编辑器里一个取色器」：用户原话是「老的那些笔记有颜色图标，
+ * 但新建笔记没有」—— 他要的其实是**一堆笔记放在一起时能一眼分辨**，
+ * 所以重点不是调色调得多细，而是列表里那颗圆点能不能点、点了马上变。
+ *
+ * 空串的处理：`color=''` 表示跟随笔记本，显示的是笔记本颜色但点稍微淡一点，
+ * 让「这篇自己没设色」和「这篇自己就是这个色」在视觉上能分开 —— 但不必给
+ * 用户解释这套继承语义，他只看得到色点。
+ */
+export function NoteDot({
+  color, inherited, size = 9, onClick, title,
+}: {
+  color: string;
+  inherited?: boolean;
+  size?: number;
+  onClick?: (e: React.MouseEvent) => void;
+  title?: string;
+}) {
+  if (!color) return null;
+  return (
+    <span
+      onClick={onClick}
+      title={title}
+      style={{
+        width: size, height: size, borderRadius: '50%', background: color,
+        flex: '0 0 auto', display: 'inline-block', cursor: onClick ? 'pointer' : 'default',
+        /* 继承来的用虚线描边：不是「没颜色」，是「这个颜色不是它自己的」 */
+        boxShadow: inherited ? `inset 0 0 0 1.5px color-mix(in srgb, var(--panel) 70%, transparent)` : 'none',
+        opacity: inherited ? 0.62 : 1,
+      }}
+    />
+  );
+}
+
+/** 笔记能选的图标（都是语义名，跟 Icons.tsx 那套对得上） */
+export const NOTE_ICONS: { k: string; n: string }[] = [
+  { k: '', n: '无' },
+  { k: 'star', n: '星标' },
+  { k: 'book', n: '读书' },
+  { k: 'sparkle', n: '灵感' },
+  { k: 'todo', n: '清单' },
+  { k: 'tag', n: '标签' },
+  { k: 'clock', n: '时间' },
+  { k: 'link', n: '链接' },
+  { k: 'image', n: '图片' },
+  { k: 'key', n: '密钥' },
+  { k: 'chart', n: '数据' },
+  { k: 'note', n: '普通' },
+];
+
+/**
+ * 色点 + 图标的小面板。列表行右键 / 编辑器工具栏都调它。
+ *
+ * 为什么不塞进 `Dialog`：这是「点一下就换个颜色」的轻操作，
+ * 弹个带标题带确定取消的模态框，点一次颜色要走三步，比不改还累。
+ */
+export function NoteMarkPicker({
+  color, icon, bookColor, onPick, onClose,
+}: {
+  color: string;
+  icon: string;
+  bookColor?: string;
+  onPick: (patch: { color?: string; icon?: string }) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="rowmenu"
+      style={{ minWidth: 188, padding: 8, display: 'block' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="small muted" style={{ marginBottom: 5 }}>颜色</div>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        {/* 第一颗是「跟随笔记本」：清掉自己的色，回到笔记本那个色 */}
+        <span
+          onClick={() => { onPick({ color: '' }); onClose(); }}
+          title={`跟随笔记本${bookColor ? `（${bookColor}）` : ''}`}
+          style={{
+            width: 20, height: 20, borderRadius: '50%', cursor: 'pointer',
+            background: bookColor || 'var(--panel2)',
+            border: `2px dashed ${!color ? 'var(--ink)' : 'var(--line)'}`,
+            boxSizing: 'border-box',
+          }}
+        />
+        {NOTE_COLORS.map((c) => (
+          <span
+            key={c}
+            onClick={() => { onPick({ color: c }); onClose(); }}
+            title={c}
+            style={{
+              width: 20, height: 20, borderRadius: '50%', background: c, cursor: 'pointer',
+              border: `2px solid ${color === c ? 'var(--ink)' : 'transparent'}`,
+              boxSizing: 'border-box',
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="small muted" style={{ margin: '9px 0 5px' }}>图标</div>
+      <div className="row" style={{ gap: 3, flexWrap: 'wrap' }}>
+        {NOTE_ICONS.map((it) => (
+          <button
+            key={it.k || 'none'}
+            className="btn sm ghost"
+            title={it.n}
+            style={{
+              padding: 4, minWidth: 26,
+              ...(icon === it.k ? { background: 'var(--panel2)', color: 'var(--ink)' } : null),
+            }}
+            onClick={() => { onPick({ icon: it.k }); onClose(); }}
+          >
+            {it.k ? <Icon name={it.k as never} size={13} /> : <span style={{ fontSize: 11 }}>无</span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

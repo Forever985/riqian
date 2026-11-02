@@ -3,6 +3,7 @@ import { api } from '../api';
 import { playAlarmSound, useStore } from '../store';
 import { Topbar } from '../components/ui';
 import { Icon } from '../components/Icons';
+import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { nowHM } from '../lib/date';
 import type { AlarmItem } from '../types';
 
@@ -453,6 +454,63 @@ export function AlarmsView() {
 
   const onN = list.filter((a) => a.enabled).length;
 
+  /*
+   * 第 235 条：右键菜单。
+   *
+   * 提醒这个列表最适合右键 —— 它的操作全是「对这一个对象做一件事」，
+   * 而页面上只放了编辑和删除两个按钮。加菜单补的是这几件：
+   *   · 推迟 10/30/60 分钟（页面上只有"正在响"的时候才给推迟，闲着的时候没有入口）
+   *   · 复制一个（"每天 8 点喝水"和"每天 9 点喝水"很常见，原来得从零填一遍）
+   *   · 开关、改、删
+   *
+   * 用户特别说过「不是粗暴地一刀切全干死」，所以凡是这个对象能做的事都放进来，
+   * 而不是只复刻已有的两个按钮。
+   */
+  const ctx = useContextMenu();
+
+  const duplicate = async (a: AlarmItem) => {
+    try {
+      await api.alarmSave({
+        kind: a.kind,
+        title: `${a.title}（副本）`,
+        atTime: a.atTime,
+        repeat: a.repeat,
+        enabled: 0,          // 副本先关着，避免同一个时间点响两次
+        intervalMin: Number(a.intervalMin) > 0 ? Number(a.intervalMin) : undefined,
+      });
+      await load();
+      toast('已复制一个，先关着的');
+    } catch {
+      toast('没复制成，再试一次');
+    }
+  };
+
+  const snoozeOne = async (a: AlarmItem, minutes: number) => {
+    try {
+      /* 只有正在响的那个才允许推到 snooze_until；
+         没在响的，用「推到 N 分钟后再响一次」是另一套语义，不做。
+         这里直接告诉用户为什么不行，比让按钮静默失败强。 */
+      if (!fired[a.id]) { toast('这个提醒现在没在响，推迟无从谈起'); return; }
+      await api.alarmSnooze(a.id, minutes);
+      await load();
+      toast(`推迟 ${minutes} 分钟`);
+    } catch {
+      toast('没推成，再试一次');
+    }
+  };
+
+  const menuFor = (a: AlarmItem): MenuItem[] => [
+    { label: a.enabled ? '关掉这个提醒' : '打开这个提醒', onClick: () => void toggle(a) },
+    { label: '编辑…', onClick: () => openEdit(a) },
+    { label: '复制一个', onClick: () => void duplicate(a) },
+    { sep: true },
+    { label: '推迟 10 分钟', disabled: !fired[a.id], onClick: () => void snoozeOne(a, 10) },
+    { label: '推迟 30 分钟', disabled: !fired[a.id], onClick: () => void snoozeOne(a, 30) },
+    { label: '推迟 1 小时', disabled: !fired[a.id], onClick: () => void snoozeOne(a, 60) },
+    { sep: true },
+    { label: '删除提醒', danger: true, onClick: () => void remove(a) },
+  ];
+
   return (
     <>
       <Topbar
@@ -648,7 +706,10 @@ export function AlarmsView() {
             {list.map((a) => {
               const ringing = !!fired[a.id];
               return (
-                <div className={`al-row ${a.enabled ? '' : 'off'} ${ringing ? 'ring' : ''}`} key={a.id}>
+                <div className={`al-row ${a.enabled ? '' : 'off'} ${ringing ? 'ring' : ''}`}
+                  key={a.id}
+                  onContextMenu={(e) => ctx.open(e, menuFor(a))}
+                >
                   <div className="al-time">{a.atTime || '--:--'}</div>
                   <div className="al-main">
                     <div className="al-title">
@@ -688,8 +749,11 @@ export function AlarmsView() {
 
         <div className="small muted" style={{ margin: '6px 4px 0' }}>
           提醒由桌面端每 30 秒检查一次，软件开着就会响；关掉软件不会响。
+          右键任意一条可以推迟、复制、开关，不用点进编辑。
         </div>
       </div>
+
+      {ctx.node}
 
       <style>{`
         .al-banner{
