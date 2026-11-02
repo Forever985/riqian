@@ -77,7 +77,27 @@ jobs:
             'C:\Program Files\Inno Setup 6\ISCC.exe'
           ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           ./installer/build-release.ps1 -InnoCompiler $iscc
-          if ($LASTEXITCODE -ne 0) { Write-Error "打包失败"; exit 1 }
+
+          # 检查产物存在，而不是检查 $LASTEXITCODE。
+          #
+          # 调用 .ps1 脚本**不会**设置 $LASTEXITCODE —— 那是原生命令才有的。
+          # 这里拿到的是上一次原生命令的残留值（或者 $null，而 $null -ne 0 为真），
+          # 两边都不可靠：既可能把成功误判成失败，也可能在脚本静默出错时放过去。
+          # 脚本内部 throw 本身就会让这一步失败，所以只需确认三个文件都出来了。
+          $ver = (Select-Xml -Path Riqian.csproj -XPath '//Version').Node.InnerText.Trim()
+          $need = @(
+            "releases\Riqian-Setup-$ver.exe",
+            "releases\Riqian-Portable-$ver.zip",
+            "releases\Riqian-Source-$ver.zip"
+          )
+          $missing = $need | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            Write-Error "打包后缺产物：$($missing -join ', ')"
+            exit 1
+          }
+          Get-ChildItem releases | ForEach-Object {
+            Write-Output ("  {0}  {1} MB" -f $_.Name, [math]::Round($_.Length/1MB,1))
+          }
 
       # 装机实测。上面那步里的 --selfcheck 只验"库建得对"，
       # 这里验"装完之后真的能起、能调接口"。
