@@ -29,6 +29,19 @@ const BODY = [
   p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
   p.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
 
+  /*
+   * 视口不够高时，「编辑区高度 = 列高」这条断言必然失败 ——
+   * 不是布局错了，是列本身只有 300 多像素高（笔记太少撑不起来），
+   * 硬要编辑区也压到 300 多反而是错的。
+   * 这条断言只在「列够高」的窗口下才有意义，所以这里先把视口放大到
+   * 接近用户实际使用的大窗口（1400×1000），保证测的是布局本身。
+   */
+  const client = await p.context().newCDPSession(p);
+  await client.send('Emulation.setDeviceMetricsOverride', {
+    width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false,
+  });
+  await p.waitForTimeout(500);
+
   await p.waitForTimeout(1500);
   // 清场：残留弹层
   if (await p.evaluate(() => document.querySelectorAll('.mask').length)) {

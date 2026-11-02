@@ -7,6 +7,9 @@ import { pad, shiftMonth, todayKey } from '../lib/date';
 import { useDragSort } from '../components/DragSort';
 import { useContextMenu, type MenuItem } from '../components/ContextMenu';
 import { Jars } from './Jars';
+import { RecurDialog } from './LedgerRecurDialog';
+import { LedgerAccountsDialog } from './LedgerAccountsDialog';
+import { BudgetDialog } from './LedgerBudgetDialog';
 import type { AccountItem, LedgerData, LedgerInsight, LedgerItem, RecurItem } from '../types';
 import {
   Donut, CatBars, Trend, Bars, WeekdayRadar, Heatmap, TopList, BalanceSplit, DailyCompare,
@@ -15,22 +18,6 @@ import {
 } from './LedgerCharts';
 
 const CATS = ['餐饮', '交通', '购物', '居住', '娱乐', '医疗', '学习', '其他'];
-/*
- * 第 221 条：账户类型不再写死。预设只是**候选**，用户可以自己填一个 ——
- * 「公积金」「股票」「饭卡」这些都不在名单里，但都是真实存在的账户。
- */
-const ACC_KINDS = ['现金', '银行卡', '信用卡', '支付宝', '微信', '花呗', '公积金', '其他'];
-
-/** 常用币种。手动输入也允许，这里只是省打字 */
-const CURRENCIES = [
-  { c: 'CNY', s: '¥', n: '人民币' },
-  { c: 'USD', s: '$', n: '美元' },
-  { c: 'EUR', s: '€', n: '欧元' },
-  { c: 'JPY', s: '¥', n: '日元' },
-  { c: 'HKD', s: 'HK$', n: '港币' },
-  { c: 'GBP', s: '£', n: '英镑' },
-];
-
 /** 一个月的第一天与最后一天 */
 function monthRange(ym: string): [string, string] {
   const [y, m] = ym.split('-').map(Number);
@@ -47,30 +34,6 @@ function dayLabel(d: string): string {
   const wd = WD[new Date(y, m - 1, day).getDay()];
   return `${m} 月 ${day} 日 · 星期${wd}`;
 }
-
-interface AccDraft {
-  id: string;
-  name: string;
-  kind: string;
-  init: string;
-  /* 第 221 条 */
-  currency: string;
-  note: string;
-  enabled: number;
-  /** 展开「更多」那一行设置 */
-  open?: boolean;
-}
-
-const toAccDraft = (list: AccountItem[]): AccDraft[] =>
-  list.map((a) => ({
-    id: a.id,
-    name: a.name,
-    kind: a.kind || '现金',
-    init: String(a.init ?? 0),
-    currency: a.currency || '',
-    note: a.note || '',
-    enabled: a.enabled ?? 1,
-  }));
 
 /** 记账本：一个月一屏，上面看数，下面记一笔 */
 export function LedgerView() {
@@ -115,25 +78,20 @@ export function LedgerView() {
   const [note, setNote] = useState('');
   const [accountId, setAccountId] = useState('');
 
-  /* ---------- 账户管理 ---------- */
+  /* 账户管理弹窗已拆成 LedgerAccountsDialog，这里只留开关 + 是否带一行空账户 */
   const [accOpen, setAccOpen] = useState(false);
-  const [accDraft, setAccDraft] = useState<AccDraft[]>([]);
+  const [accStartNew, setAccStartNew] = useState(false);
 
-  /* ---------- 预算 ---------- */
+  /* 预算弹窗已拆成 BudgetDialog，这里只留一个开关 */
   const [budgetOpen, setBudgetOpen] = useState(false);
-  const [bTotal, setBTotal] = useState('');
-  const [bCats, setBCats] = useState<{ cat: string; amount: string }[]>([]);
 
-  /* ---------- 周期账单 ---------- */
-  const [recOpen, setRecOpen] = useState(false);
-  const [recId, setRecId] = useState<string | null>(null);
-  const [rKind, setRKind] = useState<'out' | 'in'>('out');
-  const [rAmount, setRAmount] = useState('');
-  const [rCat, setRCat] = useState('居住');
-  const [rDay, setRDay] = useState('1');
-  const [rNote, setRNote] = useState('');
-  const [rAcc, setRAcc] = useState('');
-  const [rEnabled, setREnabled] = useState(true);
+  /*
+   * 周期账单的编辑弹窗已经拆成独立组件 `RecurDialog`。
+   * 原来这里有 9 个 state（recId / rKind / rAmount / rCat / rDay / rNote / rAcc / rEnabled + recOpen）
+   * 和 4 个操作函数，但主组件只用它们「打开/关闭」，一个字段都不读 —— 纯负担。
+   * 现在只剩一个「编辑哪条」的引用：null = 关着，{item: null} = 新增，{item: r} = 改它。
+   */
+  const [recurEdit, setRecurEdit] = useState<{ item: RecurItem | null } | null>(null);
 
   /*
    * 筛选条件下推给后端：合计、分类小计、按天小计全部由 SQL 算好（§2.6）。
@@ -434,181 +392,18 @@ export function LedgerView() {
     { label: '删除这一笔', hint: '找不回来', danger: true, onClick: () => void remove(it) },
   ];
 
-  /* ---------- 账户 ---------- */
-
-  const openAcc = async (addNew = false) => {
-    setAccOpen(true);
-    try {
-      const list = await api.ledgerAccounts();
-      setAccounts(list);
-      const draft = toAccDraft(list);
-      const blank: AccDraft = { id: '', name: '', kind: '现金', init: '0', currency: '', note: '', enabled: 1 };
-      setAccDraft(addNew ? [...draft, blank] : draft);
-    } catch {
-      setAccDraft(addNew ? [{ id: '', name: '', kind: '现金', init: '0', currency: '', note: '', enabled: 1 }] : []);
-      toast('账户没读出来，稍后再试');
-    }
-  };
-
-  const patchAcc = (i: number, p: Partial<AccDraft>) => {
-    setAccDraft((prev) => prev.map((x, k) => (k === i ? { ...x, ...p } : x)));
-  };
-
-  const saveAccRow = async (i: number) => {
-    const row = accDraft[i];
-    const name = row.name.trim();
-    if (!name) { toast('账户要有个名字'); return; }
-    const init = Number(row.init);
-    if (!Number.isFinite(init)) { toast('初始金额要填数字'); return; }
-    try {
-      const r = await api.accountSave({
-        id: row.id || undefined, name, kind: row.kind || '现金', init,
-        // 第 221 条：币种 / 备注一起存。传空串表示「明确清掉」，传 undefined 才是「不改」
-        currency: row.currency.trim(), note: row.note.trim(),
-      });
-      setAccDraft((prev) => prev.map((x, k) => (k === i ? { ...x, name, id: r.id || x.id, open: false } : x)));
-      await loadAccounts();
-      toast('账户已保存');
-    } catch {
-      toast('没存上，再试一次');
-    }
-  };
-
-  const delAccRow = async (i: number) => {
-    const row = accDraft[i];
-    if (!row.id) { setAccDraft((prev) => prev.filter((_, k) => k !== i)); return; }
-    if (!(await askConfirm(`删除账户「${row.name || '未命名'}」？`, { body: '已经记下的流水会保留，只是不再归属这个账户。', ok: '删除' }))) return;
-    try {
-      await api.accountDelete(row.id);
-      setAccDraft((prev) => prev.filter((_, k) => k !== i));
-      if (accountId === row.id) setAccountId('');
-      await loadAccounts();
-      toast('账户已删除');
-    } catch {
-      toast('没删掉，再试一次');
-    }
-  };
-
-  /* 第 221 条：账户顺序可拖，拖完立刻落库 */
-  const accKeys = useMemo(() => accDraft.map((r) => r.id).filter(Boolean), [accDraft]);
-  const accDrag = useDragSort({
-    keys: accKeys,
-    onReorder: async (from, to) => {
-      const ids = [...accKeys];
-      const [moved] = ids.splice(from, 1);
-      ids.splice(to, 0, moved);
-      // 草稿里也同步挪（含还没保存的新账户，它们不在 accKeys 里）
-      setAccDraft((prev) => {
-        const saved = prev.filter((x) => x.id);
-        const news = prev.filter((x) => !x.id);
-        const byId = new Map(saved.map((x) => [x.id, x]));
-        return [...ids.map((id) => byId.get(id)!).filter(Boolean), ...news];
-      });
-      try {
-        await api.accountReorder(ids);
-        await loadAccounts();
-        toast('账户顺序已保存');
-      } catch {
-        toast('顺序没存上，再拖一次');
-      }
-    },
-  });
-
-  /** 停用 / 启用。停用后不进记账下拉，但历史流水和余额都还在 */
-  const toggleAcc = async (row: AccDraft) => {
-    if (!row.id) return;
-    const next = row.enabled ? 0 : 1;
-    try {
-      await api.accountToggle(row.id, next);
-      setAccDraft((prev) => prev.map((x) => (x.id === row.id ? { ...x, enabled: next } : x)));
-      await loadAccounts();
-      if (!next && accountId === row.id) setAccountId('');
-      toast(next ? `「${row.name}」已启用` : `「${row.name}」已停用，记账时不再出现`);
-    } catch {
-      toast('没改成功，再试一次');
-    }
-  };
 
   /* ---------- 预算 ---------- */
 
-  const openBudget = () => {
-    setBTotal(budgetTotal > 0 ? String(budgetTotal) : '');
-    setBCats(Object.entries(catBudget).map(([c, n]) => ({ cat: c, amount: String(n) })));
-    setBudgetOpen(true);
-  };
 
-  const saveBudget = async () => {
-    const total = String(bTotal).trim();
-    const totalN = Number(total);
-    const map: Record<string, number> = {};
-    for (const r of bCats) {
-      const c = r.cat.trim();
-      const n = Number(r.amount);
-      if (!c || !Number.isFinite(n) || n <= 0) continue;
-      map[c] = n;
-    }
-    try {
-      await setSetting('ledgerBudget', total && Number.isFinite(totalN) && totalN > 0 ? String(totalN) : '');
-      await setSetting('ledgerBudgetCats', JSON.stringify(map));
-      setBudgetOpen(false);
-      toast('预算已保存');
-    } catch {
-      toast('没存上，再试一次');
-    }
-  };
 
-  /* ---------- 周期账单 ---------- */
 
-  const openRecurNew = () => {
-    setRecId(null);
-    setRKind('out');
-    setRAmount('');
-    setRCat('居住');
-    setRDay('1');
-    setRNote('');
-    setRAcc('');
-    setREnabled(true);
-    setRecOpen(true);
-  };
-
-  const openRecurEdit = (r: RecurItem) => {
-    setRecId(r.id);
-    setRKind(r.kind === 'in' ? 'in' : 'out');
-    setRAmount(String(r.amount ?? ''));
-    setRCat(r.cat || '其他');
-    setRDay(String(r.day || 1));
-    setRNote(r.note || '');
-    setRAcc(r.accountId || '');
-    setREnabled(!!r.enabled);
-    setRecOpen(true);
-  };
-
-  const saveRecur = async () => {
-    const n = Number(rAmount);
-    if (!Number.isFinite(n) || n <= 0) { toast('金额要填一个大于 0 的数'); return; }
-    const day = Math.round(Number(rDay));
-    // 第 160 条：允许到 31；当月没有那一天就自动落到月末（后端也一样处理）
-    if (!Number.isFinite(day) || day < 1 || day > 31) { toast('每月几号请填 1 到 31'); return; }
-    try {
-      await api.ledgerRecurSave({
-        id: recId ?? undefined,
-        kind: rKind,
-        amount: n,
-        cat: (rCat || '其他').trim() || '其他',
-        note: rNote.trim(),
-        accountId: rAcc || undefined,
-        day,
-        enabled: rEnabled ? 1 : 0,
-      });
-      setRecOpen(false);
-      setRecId(null);
-      await loadRecur();
-      toast(recId ? '规则已保存' : '规则加好了');
-    } catch {
-      toast('没存上，再试一次');
-    }
-  };
-
+  /*
+   * 周期账单的两个「列表行内动作」留在主组件。
+   *
+   * 它们不碰表单状态，只需要规则本身 + 刷新列表，属于「列表」的职责而不是「表单」的。
+   * 表单那半边（9 个输入字段 + 校验 + 保存）已经搬进 RecurDialog 了。
+   */
   const toggleRecur = async (r: RecurItem) => {
     try {
       await api.ledgerRecurSave({
@@ -653,8 +448,8 @@ export function LedgerView() {
           <h3>
             <Icon name="database" size={14} />账户
             <span className="muted">{accounts.length} 个</span>
-            <button className="btn sm" type="button" onClick={() => void openAcc(true)}>新增账户</button>
-            <button className="btn sm ghost" type="button" onClick={() => void openAcc(false)}>管理</button>
+            <button className="btn sm" type="button" onClick={() => { setAccStartNew(true); setAccOpen(true); }}>新增账户</button>
+            <button className="btn sm ghost" type="button" onClick={() => { setAccStartNew(false); setAccOpen(true); }}>管理</button>
           </h3>
           {accounts.length ? (
             <div className="lg-accs">
@@ -679,7 +474,7 @@ export function LedgerView() {
           <h3>
             <Icon name="chart" size={14} />预算
             <span className="muted">{ym === cur ? '本月' : `${Number(m)} 月`}已花 {amt(expense)}</span>
-            <button className="btn sm" type="button" onClick={openBudget}>编辑预算</button>
+            <button className="btn sm" type="button" onClick={() => setBudgetOpen(true)}>编辑预算</button>
           </h3>
           {budgetTotal > 0 ? (() => {
             const over = expense > budgetTotal;
@@ -980,7 +775,7 @@ export function LedgerView() {
           <h3>
             <Icon name="refresh" size={14} />每月固定支出
             <span className="muted">{recurs.filter((r) => r.enabled).length} / {recurs.length} 条启用</span>
-            <button className="btn sm" type="button" onClick={openRecurNew}>新增规则</button>
+            <button className="btn sm" type="button" onClick={() => setRecurEdit({ item: null })}>新增规则</button>
           </h3>
           {recurs.length ? (
             <div>
@@ -1002,7 +797,7 @@ export function LedgerView() {
                     title={r.enabled ? '停用' : '启用'}
                     onClick={() => void toggleRecur(r)}
                   />
-                  <button className="btn sm" type="button" onClick={() => openRecurEdit(r)}>编辑</button>
+                  <button className="btn sm" type="button" onClick={() => setRecurEdit({ item: r })}>编辑</button>
                   <button className="btn sm danger" type="button" onClick={() => void removeRecur(r)}>删除</button>
                 </div>
               ))}
@@ -1227,326 +1022,34 @@ export function LedgerView() {
       ) : null}
 
       {accOpen ? (
-        <Dialog
-          title="账户管理"
-          wide
+        <LedgerAccountsDialog
+          accounts={accounts}
+          jarTotal={jarTotal}
+          amt={amt}
+          startWithNew={accStartNew}
           onClose={() => setAccOpen(false)}
-          footer={<>
-            <button className="btn" type="button" onClick={() => setAccOpen(false)}>关闭</button>
-            <button
-              className="btn primary"
-              type="button"
-              onClick={() => setAccDraft((prev) => [
-                ...prev, { id: '', name: '', kind: '现金', init: '0', currency: '', note: '', enabled: 1, open: true },
-              ])}
-            >新增账户</button>
-          </>}
-        >
-          <div className="small muted" style={{ marginBottom: 10, lineHeight: 1.7 }}>
-            余额 = 初始金额 + 收入 − 支出。删掉账户不会删流水，那些流水只是不再归属账户。
-            <br />
-            拖左边的把手可以换顺序；停用的账户不进记账下拉，但余额和历史都还在。
-          </div>
-          {/* 第 162 条：先给一张总览，再给可编辑的明细 */}
-          {accounts.length ? (
-            <div className="lg-acc-sum">
-              {(() => {
-                /* 总资产 = 账户余额 + 罐子余额。
-                   罐子里的钱只是换了个地方待着，不该从总资产里消失。
-                   罐子为 0 时不多显示一行，避免老用户看到没见过的数字。 */
-                const accSum = accounts.reduce((n, a) => n + (a.balance || 0), 0);
-                return (
-                  <div>
-                    <span className="k">总资产</span>
-                    <b>{amt(accSum + jarTotal)}</b>
-                    {Math.abs(jarTotal) > 0.004 ? (
-                      <span className="small muted" style={{ marginLeft: 6 }}>
-                        （账户 {amt(accSum)} · 罐子 {amt(jarTotal)}）
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })()}
-              <div>
-                <span className="k">本月流入</span>
-                <b className="in">{amt(accounts.reduce((n, a) => n + (a.monthIn || 0), 0))}</b>
-              </div>
-              <div>
-                <span className="k">本月流出</span>
-                <b className="out">{amt(accounts.reduce((n, a) => n + (a.monthOut || 0), 0))}</b>
-              </div>
-            </div>
-          ) : null}
-
-          <div ref={accDrag.boxRef} className="lg-acclist">
-          {accDraft.length ? accDraft.map((row, i) => {
-            const saved = !!row.id;
-            // 拖动的 key 只认已保存的账户；新行还没 id，让它留在原位
-            const dragProps = saved ? accDrag.props(accKeys.indexOf(row.id)) : null;
-            const bal = saved ? accounts.find((a) => a.id === row.id)?.balance ?? 0 : 0;
-            const off = !row.enabled;
-            return (
-              <div
-                className={`lg-acc-block ${off ? 'off' : ''} ${dragProps?.className || ''}`}
-                key={row.id || `new-${i}`}
-                data-dragkey={dragProps?.['data-dragkey']}
-                draggable={dragProps?.draggable}
-                onDragStart={dragProps?.onDragStart}
-                onDragOver={dragProps?.onDragOver}
-                onDragLeave={dragProps?.onDragLeave}
-                onDrop={dragProps?.onDrop}
-                onDragEnd={dragProps?.onDragEnd}
-                data-acc={row.id || 'new'}
-              >
-                <div className="row lg-accrow">
-                  {/* 把手：只有已保存的能拖，新行拖了也存不下去 */}
-                  <span className={`lg-grip ${saved ? '' : 'off'}`} title={saved ? '按住拖动换顺序' : '先保存再拖'}>
-                    <Icon name="grip" size={13} />
-                  </span>
-                  <input
-                    className="inp"
-                    style={{ flex: '1 1 110px', minWidth: 90 }}
-                    placeholder="账户名"
-                    value={row.name}
-                    onChange={(e) => patchAcc(i, { name: e.target.value })}
-                  />
-                  {/* 第 221 条：类型可自定义 —— 用 datalist 而不是 select */}
-                  <input
-                    className="inp"
-                    list="lg-acckind-list"
-                    style={{ width: 100, flex: '0 0 auto' }}
-                    placeholder="类型"
-                    value={row.kind}
-                    onChange={(e) => patchAcc(i, { kind: e.target.value })}
-                    title="可以选预设，也可以自己填一个"
-                  />
-                  <input
-                    className="inp"
-                    style={{ width: 110, flex: '0 0 auto' }}
-                    type="number"
-                    step="0.01"
-                    placeholder="初始金额"
-                    value={row.init}
-                    onChange={(e) => patchAcc(i, { init: e.target.value })}
-                  />
-                  <span className="small muted" style={{ width: 56, textAlign: 'right' }}>
-                    {saved ? amt(bal) : '新账户'}
-                  </span>
-                  <button
-                    className="btn sm ghost"
-                    type="button"
-                    title="币种 / 备注"
-                    onClick={() => patchAcc(i, { open: !row.open })}
-                  ><Icon name={row.open ? 'up' : 'down'} size={12} /></button>
-                  <button className="btn sm primary" type="button" onClick={() => void saveAccRow(i)}>保存</button>
-                  <button className="btn sm danger" type="button" onClick={() => void delAccRow(i)}>
-                    {saved ? '删除' : '移除'}
-                  </button>
-                </div>
-
-                {/* 第 221 条：币种 + 备注，平时折起来不占地方 */}
-                {row.open ? (
-                  <div className="row lg-accmore">
-                    <span className="small muted" style={{ width: 40 }}>币种</span>
-                    <input
-                      className="inp"
-                      list="lg-cur-list"
-                      style={{ width: 96, flex: '0 0 auto' }}
-                      placeholder="CNY"
-                      value={row.currency}
-                      onChange={(e) => patchAcc(i, { currency: e.target.value.toUpperCase() })}
-                      maxLength={6}
-                    />
-                    <span className="small muted" style={{ width: 40 }}>备注</span>
-                    <input
-                      className="inp"
-                      style={{ flex: '1 1 140px', minWidth: 100 }}
-                      placeholder="这张卡是干什么用的（可空）"
-                      value={row.note}
-                      onChange={(e) => patchAcc(i, { note: e.target.value })}
-                    />
-                    {saved ? (
-                      <button
-                        className={`switch ${row.enabled ? 'on' : ''}`}
-                        type="button"
-                        aria-pressed={!!row.enabled}
-                        title={row.enabled ? '停用（记账时不出现）' : '启用'}
-                        onClick={() => void toggleAcc(row)}
-                      />
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {saved ? (() => {
-                  const a = accounts.find((x) => x.id === row.id);
-                  if (!a) return null;
-                  return (
-                    <div className="lg-acc-sub">
-                      <span>余额 <b>{amt(a.balance || 0)}</b></span>
-                      <span className="in">本月 +{amt(a.monthIn || 0)}</span>
-                      <span className="out">−{amt(a.monthOut || 0)}</span>
-                      {a.currency ? <span className="lg-acc-cur">{a.currency}</span> : null}
-                      {a.note ? <span className="lg-acc-note">{a.note}</span> : null}
-                      {off ? <span className="lg-acc-off">已停用</span> : null}
-                    </div>
-                  );
-                })() : null}
-              </div>
-            );
-          }) : <div className="empty small">还没有账户，点右下角「新增账户」加一个。设了账户以后，记账时能选归属，余额会自动跟着流水走。</div>}
-          </div>
-
-          <datalist id="lg-acckind-list">
-            {ACC_KINDS.map((k) => <option key={k} value={k} />)}
-          </datalist>
-          <datalist id="lg-cur-list">
-            {CURRENCIES.map((c) => <option key={c.c} value={c.c}>{`${c.n} ${c.s}`}</option>)}
-          </datalist>
-        </Dialog>
+          onChanged={() => void loadAccounts()}
+          onAccountRemoved={(id) => { if (accountId === id) setAccountId(""); }}
+        />
       ) : null}
 
       {budgetOpen ? (
-        <Dialog
-          title="月度预算"
-          wide
+        <BudgetDialog
+          currentTotal={budgetTotal}
+          currentCats={catBudget}
+          categories={cats}
           onClose={() => setBudgetOpen(false)}
-          footer={<>
-            <button className="btn" type="button" onClick={() => setBudgetOpen(false)}>取消</button>
-            <button className="btn primary" type="button" onClick={() => void saveBudget()}>保存</button>
-          </>}
-        >
-          <div className="row" style={{ marginBottom: 14 }}>
-            <span className="small muted" style={{ width: 74 }}>总预算</span>
-            <input
-              className="inp"
-              style={{ width: 160 }}
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="留空 = 不设"
-              value={bTotal}
-              onChange={(e) => setBTotal(e.target.value)}
-            />
-            <span className="small muted">每月支出上限，超了这里会标红。</span>
-          </div>
-          <div className="small muted" style={{ marginBottom: 8 }}>分类预算</div>
-          <datalist id="lg-cat-list">
-            {cats.map((c) => <option key={c} value={c} />)}
-          </datalist>
-          {bCats.map((row, i) => (
-            <div className="row" key={i} style={{ marginBottom: 8 }}>
-              <input
-                className="inp"
-                style={{ flex: '1 1 140px', minWidth: 120 }}
-                list="lg-cat-list"
-                placeholder="分类名"
-                value={row.cat}
-                onChange={(e) => setBCats((prev) => prev.map((x, k) => (k === i ? { ...x, cat: e.target.value } : x)))}
-              />
-              <input
-                className="inp"
-                style={{ width: 140, flex: '0 0 auto' }}
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="金额"
-                value={row.amount}
-                onChange={(e) => setBCats((prev) => prev.map((x, k) => (k === i ? { ...x, amount: e.target.value } : x)))}
-              />
-              <button
-                className="btn sm danger"
-                type="button"
-                onClick={() => setBCats((prev) => prev.filter((_, k) => k !== i))}
-              >删除</button>
-            </div>
-          ))}
-          <button
-            className="btn sm"
-            type="button"
-            onClick={() => setBCats((prev) => [...prev, { cat: '', amount: '' }])}
-          >加一个分类</button>
-        </Dialog>
+        />
       ) : null}
 
-      {recOpen ? (
-        <Dialog
-          title={recId ? '改固定支出' : '新增固定支出'}
-          wide
-          onClose={() => { setRecOpen(false); setRecId(null); }}
-          footer={<>
-            <button className="btn" type="button" onClick={() => { setRecOpen(false); setRecId(null); }}>取消</button>
-            <button className="btn primary" type="button" onClick={() => void saveRecur()}>{recId ? '保存' : '添加'}</button>
-          </>}
-        >
-          <div className="row" style={{ marginBottom: 10 }}>
-            <div className="seg">
-              <button type="button" className={`seg-b ${rKind === 'out' ? 'on' : ''}`} onClick={() => setRKind('out')}>支出</button>
-              <button type="button" className={`seg-b ${rKind === 'in' ? 'on' : ''}`} onClick={() => setRKind('in')}>收入</button>
-            </div>
-            <input
-              className="inp lg-amount"
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="金额"
-              value={rAmount}
-              onChange={(e) => setRAmount(e.target.value)}
-            />
-            <input
-              className="inp"
-              style={{ flex: 1, minWidth: 140 }}
-              placeholder="备注（可空）"
-              value={rNote}
-              onChange={(e) => setRNote(e.target.value)}
-            />
-          </div>
-          <div className="row" style={{ marginBottom: 10 }}>
-            <span className="small muted" style={{ width: 34 }}>分类</span>
-            {cats.map((c) => (
-              <button
-                type="button"
-                key={c}
-                className={`chip ${rCat === c ? 'on' : ''}`}
-                onClick={() => setRCat(c)}
-              >{c}</button>
-            ))}
-          </div>
-          <div className="row" style={{ marginBottom: 10 }}>
-            <span className="small muted" style={{ width: 62 }}>每月几号</span>
-            <input
-              className="inp"
-              style={{ width: 90, flex: '0 0 auto' }}
-              type="number"
-              min="1"
-              max="31"
-              step="1"
-              value={rDay}
-              onChange={(e) => setRDay(e.target.value)}
-            />
-            <span className="small muted">1 到 31；当月没这一天就记在月末（比如 31 号在 2 月就是 28 号）</span>
-          </div>
-          <div className="row">
-            <span className="small muted" style={{ width: 62 }}>账户</span>
-            <select
-              className="inp"
-              style={{ width: 150, flex: '0 0 auto' }}
-              value={rAcc}
-              onChange={(e) => setRAcc(e.target.value)}
-            >
-              <option value="">不归属账户</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <div style={{ flex: 1 }} />
-            <button
-              type="button"
-              className={`switch ${rEnabled ? 'on' : ''}`}
-              aria-pressed={rEnabled}
-              onClick={() => setREnabled(!rEnabled)}
-              title={rEnabled ? '启用中' : '已停用'}
-            />
-            <span className="small">{rEnabled ? '每月自动记入' : '先存着，不自动记'}</span>
-          </div>
-        </Dialog>
+      {recurEdit ? (
+        <RecurDialog
+          editing={recurEdit.item}
+          categories={cats}
+          accounts={accounts}
+          onClose={() => setRecurEdit(null)}
+          onSaved={(msg) => { setRecurEdit(null); void loadRecur(); toast(msg); }}
+        />
       ) : null}
 
       <style>{`

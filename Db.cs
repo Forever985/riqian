@@ -342,6 +342,20 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             EnsureV10();
             // v11：排序轮子 / 无限层级目录 / 学习模块 / 媒体批量导入（第 196-235 条）
             EnsureV11();
+            /*
+             * v13：储蓄罐（jars 表 + ledger.jar_id / jar_base 两列）。
+             *
+             * 这一行以前是漏的 —— EnsureV13 只在 JarList / JarSave 这类罐子接口里
+             * 懒调用。后果不是「罐子功能用不了」这么轻：
+             *   ledger.accounts、ledger.insight、以及所有带 `IFNULL(jar_id,'')=''`
+             *   的统计查询都会直接抛 `no such column: jar_id`，
+             *   全新装机的用户一进记账本就是一整页报错、图表全空。
+             *
+             * 老库之所以看不出问题，是因为升级时手动跑过 EnsureV13，
+             * 或者建库时代码里恰好走到过罐子接口 —— 这个 bug 被「历史」掩盖了。
+             * 只要有人删档重开或者换台机器，立刻现形。所以必须放在这里。
+             */
+            EnsureV13();
 
             foreach (var t in new[] { "todos", "countdowns", "pomodoro" })
             {

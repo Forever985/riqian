@@ -1320,7 +1320,21 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
     clamp(130px, 15%, 186px)
     clamp(250px, 27%, 292px)
     minmax(380px, 1fr);
-  gap:14px;align-items:start;height:calc(100vh - 150px);
+  gap:14px;
+  /*
+   * 这里原本是 align-items:start，看着没问题，实际是个坑：
+   * start 意味着三列各自按**内容**高度撑开，互不相干。
+   * 编辑区写了 height:100%，但父级是 start 时 100% 没有可参照的高，
+   * 于是退回 auto（= 内容高度），大窗口下长成 850px；
+   * 而左边笔记列表只有几条，实际高度 316px。
+   * 结果就是编辑区比列表高出一大截，左下角留一块空灰，
+   * 右边的输入框却已经超出列表底部 —— 视觉上像两栏没对齐。
+   *
+   * 改成 stretch：三列统一撑满 .notes 的固定高度，等高。
+   * 列内部各自的 overflow-y:auto 负责滚动，不会互相顶开。
+   */
+  align-items:stretch;
+  height:calc(100vh - 150px);
   /* 窗口窄于三栏之和时允许横向滚动，不硬压 */
   overflow-x:auto;
 }
@@ -1340,7 +1354,14 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 .notes.zen .nbooks,.notes.zen .nlist{display:none}
 .notes.zen .nedit{max-width:46em;width:100%;justify-self:center}
 .nbooks,.nlist{
-  display:flex;flex-direction:column;gap:2px;overflow-y:auto;max-height:100%;
+  display:flex;flex-direction:column;gap:2px;overflow-y:auto;
+  /*
+   * 父级现在是 align-items:stretch，这两列已经被拉满整列高度了，
+   * 所以这里要 height:100%（撑开），不能写 max-height:100%（那只是上限）。
+   * 写 max-height 的话，条目少时列高就等于几条的高度，
+   * 滚动容器本身也跟着变矮，看起来还是没对齐。
+   */
+  height:100%;max-height:100%;
   padding-right:3px;
 }
 .nbookrow{display:flex;align-items:center;gap:0}

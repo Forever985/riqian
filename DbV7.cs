@@ -168,6 +168,22 @@ CREATE TABLE IF NOT EXISTS festivals(
 
         /* ================= 备忘录 ================= */
 
+        /// <summary>
+        /// 笔记本列表。
+        ///
+        /// **parentId 必须返回。** 这里原来只给了 id / name / color / sort / count，
+        /// 漏掉了 parent_id —— 而前端从第 220 条起就把「无限层级」整条链路
+        /// 建在 b.parentId 上：左栏缩进、折叠箭头、跨层拖动、NotebookDialog 的
+        /// 「换上级」下拉、MoveNoteDialog 的分组显示，全靠它判断父子。
+        ///
+        /// 后果不是「少显示一个字段」这么轻：parentId 恒为 undefined →
+        /// 每个笔记本都被当成顶层 → 所有父子关系在界面上凭空消失，
+        /// 但数据里 parent_id 是对的。用户看到的是「层级功能根本没用」，
+        /// 而数据库里一切正常 —— 这种「数据对、显示错」最难查。
+        ///
+        /// 注意 RpcCatalog 里 notebooks.list 的说明写的就是「含 parentId」，
+        /// 所以这是实现漏了，不是文档写错。
+        /// </summary>
         public object Notebooks()
         {
             return Rows(@"
@@ -180,6 +196,8 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
                     color = Str(r["color"]),
                     sort = Int(r["sort"]),
                     count = Int(r["n"]),
+                    /* 空串 = 顶层。前端用 `!b.parentId` 判断，所以空串和 null 等价，统一给空串 */
+                    parentId = r.ContainsKey("parent_id") ? Str(r["parent_id"]) : "",
                 }).ToList();
         }
 

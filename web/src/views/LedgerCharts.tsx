@@ -759,10 +759,18 @@ export function StackedMonths({
               {/* 透明热区比柱子宽，鼠标好点 */}
               <rect x={padL + gap * i} y={padT} width={gap} height={innerH} fill="transparent" />
               {d.parts.map((p) => {
-                if (p.sum <= 0) return null;
+                /*
+                 * 这里原来只判 p.sum <= 0。脏数据（字段名对不上导致 undefined、
+                 * 后端序列化漏字段等）不会被这个条件拦住 —— undefined <= 0 是 false。
+                 * 于是 h 算出 NaN，塞进 <rect> 的 y/height，控制台报
+                 * "Expected length, NaN"，整块堆叠柱直接不显示。
+                 * 补一个 isFinite 兜底：算不出数就当没有，宁可不画也不要画个 NaN。
+                 */
+                if (!Number.isFinite(p.sum) || p.sum <= 0) return null;
                 const h = (p.sum / max) * innerH;
                 const y = padT + innerH - acc - h;
                 acc += h;
+                if (!Number.isFinite(y) || !Number.isFinite(h)) return null;
                 return (
                   <rect
                     key={p.cat}

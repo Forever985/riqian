@@ -818,11 +818,18 @@ namespace Riqian
         /// 堆叠图的单段（第 239 条）。
         /// 用具名类而不是匿名类型：匿名类型在 List 里拿不到强类型属性，
         /// 前面那版用反射取 `cat` / `sum` 才能拼，又慢又容易在改字段名时静默出错。
+        ///
+        /// 必须是**属性**不能是字段：这里用的是 System.Text.Json，它默认只序列化
+        /// public 属性、跳过 public 字段（MainForm.Reply 也没开 IncludeFields）。
+        /// 写成字段的话序列化结果是 `[{}]`，前端 p.sum 拿到 undefined，
+        /// `undefined <= 0` 是 false 而不是 true，能绕过「金额≤0 就不画」的判断，
+        /// 直接把 NaN 塞进 <rect> 的 y/height —— 控制台刷 "Expected length, NaN"，
+        /// 堆叠柱整块消失。这个坑踩过一次，别再改回字段。
         /// </summary>
         internal sealed class CatPart
         {
-            public string cat = "";
-            public double sum;
+            public string cat { get; set; } = "";
+            public double sum { get; set; }
         }
 
         /* ================================================================== */

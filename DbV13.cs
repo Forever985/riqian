@@ -37,7 +37,15 @@ namespace Riqian
      */
     public partial class Db
     {
-        private void EnsureV13()
+        /// <summary>
+        /// v13 迁移：储蓄罐表 + ledger 的两个关联列。
+        ///
+        /// internal 是为了让 Db.cs 的启动迁移链能调（原先是 private，
+        /// 只能在罐子接口里懒调用，导致新库缺列 —— 详见 Db.cs 里那处调用的注释）。
+        /// 各接口里的懒调用保留：一来重复执行是幂等的（全是 IF NOT EXISTS），
+        /// 二来万一有更老的库没走到启动链，靠接口也能把列补上。
+        /// </summary>
+        internal void EnsureV13()
         {
             Exec(@"CREATE TABLE IF NOT EXISTS jars(
                 id TEXT PRIMARY KEY,
