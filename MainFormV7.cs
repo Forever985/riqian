@@ -21,7 +21,8 @@ namespace Riqian
         private NotifyIcon tray;
         private ToastForm toast;
         private bool reallyExit;
-        private long _lastToastTest;
+        /* 提醒测试的防抖时间戳已随分发层搬到 RpcDispatcher（两端共用一份），
+           原来这里还有一个，编译期提示 CS0169「从不使用」—— 留着只会有两个计时器。 */
 
         /* ================= 托盘 ================= */
 

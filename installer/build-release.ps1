@@ -166,7 +166,11 @@ if (-not $InnoCompiler -or -not (Test-Path $InnoCompiler)) {
 }
 else {
     Write-Host "  用 $InnoCompiler"
-    & $InnoCompiler (Join-Path $repo 'installer\riqian.iss')
+    # 版本号必须传进去：iss 里那份只是兜底，唯一来源是 csproj 的 <Version>。
+    # 不传的后果是安装包名字和「添加或删除程序」里永远停在上一个版本 ——
+    # 而 ISCC 不会报错，产物名字看着也正常。2026-11-11 就这么出过一次：
+    # 打的是 12.9.6 的内容，文件名却是 Riqian-Setup-12.9.5.exe。
+    & $InnoCompiler "/DAppVersion=$ver" (Join-Path $repo 'installer\riqian.iss')
     if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败（退出码 $LASTEXITCODE）" }
 }
 

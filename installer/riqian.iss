@@ -15,7 +15,15 @@
 
 #define AppName        "日签"
 #define AppNameEn      "Riqian"
-#define AppVersion     "12.9.5"
+; 版本号**由 build-release.ps1 通过 /DAppVersion= 传进来**，唯一来源是 Riqian.csproj 的 <Version>。
+;
+; 原来这里写死成 "12.9.5"，脚本又不传 —— 结果 v12.9.6 发布出来的安装包
+; 文件名和「添加或删除程序」里都写着 12.9.5。这种错很难在打包日志里看出来：
+; ISCC 会安静地按写死的值编译，产物名字看着也挺正常。
+; 下面的 #ifndef 只是兜底，让单独手工编译时不至于直接失败。
+#ifndef AppVersion
+  #define AppVersion   "0.0.0-unknown"
+#endif
 #define AppPublisher   "Forever985"
 #define AppURL         "https://github.com/Forever985/riqian4"
 #define AppExeName     "Riqian.exe"
