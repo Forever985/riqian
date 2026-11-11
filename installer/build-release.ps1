@@ -139,7 +139,11 @@ https://github.com/Forever985/riqian4
         (New-Object System.Text.UTF8Encoding($false)))
 
     $zip = Join-Path $relDir "Riqian-Portable-$ver.zip"
-    Compress-Archive -Path (Join-Path $portableStage '*') -DestinationPath $zip -CompressionLevel Optimal
+    # -Force：允许覆盖同名包。
+    # 脚本开头会先清 releases\Riqian-*，但那一步是 Remove-Item；
+    # 只要清理失败（被占、权限、安全策略拦），这里就会因为"存档已存在"直接崩，
+    # 而报错信息（ArchiveFileExists）完全指不到真因。覆盖是这里唯一想做的事。
+    Compress-Archive -Path (Join-Path $portableStage '*') -DestinationPath $zip -CompressionLevel Optimal -Force
     Write-Host "  $([IO.Path]::GetFileName($zip)) = $([math]::Round((Get-Item $zip).Length/1MB,1)) MB"
 }
 finally {
