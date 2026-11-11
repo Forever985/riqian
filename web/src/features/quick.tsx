@@ -62,6 +62,15 @@ export function QuickPanel() {
       const today = todayKey();
       const st = useStore.getState();
       const [entry, modules] = await Promise.all([api.entry.get(today), api.modules.list()]);
+      /*
+       * #244 衍生：今天如果加了密码，entry.get 返回的是**空内容**。
+       * 拿这份空内容去拼接再 save，就是把整篇日记覆盖成「只有刚打的这句」。
+       * 宁可拒绝，也不能悄悄吃掉用户原来的字。
+       */
+      if ((entry as { locked?: boolean }).locked) {
+        toast('今天设了密码，先在软件里解锁再记');
+        return;
+      }
       const mod = modules.filter((m) => m.enabled === 1).find((m) => m.type === 'richtext');
       const values = { ...(entry.values || {}) } as Record<string, unknown>;
       const safe = v.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));

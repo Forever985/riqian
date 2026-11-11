@@ -191,19 +191,34 @@ export function ReviewView() {
                   <div><b>{data.images}</b><span>图片</span></div>
                 </div>
 
-                {data.oneLine ? (
+                {/*
+                  * #244 衍生：这一天加了密码。
+                  *
+                  * 后端已经把正文、字数、标签、心情全清空了，这里不能显示成
+                  * 「这一天还没有写」—— 那会让人以为内容丢了。
+                  * 明确说是被锁了，并给一个去解锁的入口。
+                  */}
+                {data.locked ? (
+                  <div className="empty small" style={{ lineHeight: 1.9 }}>
+                    🔒 这一天设了密码，内容不在总结里显示。
+                    <br />
+                    想看得先解锁 —— 点下面的「打开这一天」。
+                  </div>
+                ) : null}
+
+                {!data.locked && data.oneLine ? (
                   <div className="sum-quote">
                     <span className="q">“</span>{data.oneLine}
                   </div>
                 ) : null}
 
-                {data.plain ? (
+                {!data.locked ? (data.plain ? (
                   <div className="sum-body">{data.plain.slice(0, 900)}{data.plain.length > 900 ? '…' : ''}</div>
                 ) : (
                   <div className="empty small">这一天还没有写。要不现在补一句？</div>
-                )}
+                )) : null}
 
-                {data.tags.length ? (
+                {!data.locked && data.tags.length ? (
                   <div className="row" style={{ marginTop: 12 }}>
                     {data.tags.map((t) => <span className="chip" key={t}>#{t}</span>)}
                   </div>

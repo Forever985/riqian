@@ -33,12 +33,19 @@ export const FEATURES = [
   { k: 'navRecords', n: '记录搜索' },
   { k: 'navTodos', n: '待办' },
   { k: 'navCountdown', n: '倒计时' },
+  /* #250 */
+  { k: 'navWish', n: '愿望单' },
   { k: 'navNotes', n: '笔记 / 备忘录' },
   { k: 'navDraw', n: '画板' },
   { k: 'navStats', n: '统计' },
-  { k: 'navThemeCenter', n: '主题中心' },
-  { k: 'navPluginCenter', n: '插件中心' },
-  { k: 'navWorkshop', n: '创意工坊' },
+  /*
+   * #245：主题 / 插件 / 工坊已合并成「扩展」一页，开关也合并成一个。
+   *
+   * 旧的 navThemeCenter / navPluginCenter / navWorkshop / navCache 不再出现 ——
+   * 留着它们只会让设置里出现「开关还在、但导航里根本没有这一项」的死开关，
+   * 用户点了没反应，会以为程序坏了。
+   */
+  { k: 'navExtensions', n: '扩展（主题 / 插件 / 内容包）' },
   { k: 'navProfile', n: '我的（账户、安全、缓存）' },
 ];
 

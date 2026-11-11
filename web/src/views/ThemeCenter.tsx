@@ -21,7 +21,15 @@ import {
 import type { ThemePack } from '../lib/pack';
 import { InstallDialog, InstalledList, MakePackDialog } from '../features/PackUI';
 
-export function ThemeCenterView() {
+/**
+ * #245：`embedded` = 被「扩展」页内嵌时的模式。
+ *
+ * 三个中心（主题 / 插件 / 工坊）在导航里各占一格，加上缓存就是四格，
+ * 而它们都是「装点东西」的低频页。合并成一页之后，由外层渲染唯一的顶栏，
+ * 内层不能再渲染一个 —— Topbar 是 portal 到 #topbar-slot 的，
+ * 两处都渲染会把同一个标题槽写两遍，标题会叠在一起。
+ */
+export function ThemeCenterView({ embedded = false }: { embedded?: boolean } = {}) {
   const settings = useStore((s) => s.settings) as Record<string, unknown>;
   const setSetting = useStore((s) => s.setSetting);
   const toast = useStore((s) => s.toast);
@@ -55,22 +63,32 @@ export function ThemeCenterView() {
     refresh();
   };
 
+  /*
+   * 顶栏右侧那两颗按钮，内嵌时也要能用 —— 只是从「顶栏」挪到「内容顶部一行」。
+   * 不挪的话，合并进「扩展」页之后用户就找不到「安装主题」了。
+   */
+  const actions = (
+    <>
+      <button className="btn" onClick={() => setMaking(true)} data-act="theme-make">
+        <Icon name="share" /> 做一个
+      </button>
+      <button className="btn primary" onClick={() => setInstalling(true)} data-act="theme-install-open">
+        <Icon name="plus" /> 安装主题
+      </button>
+    </>
+  );
+
   return (
-    <div className="page">
-      <Topbar
-        title="主题中心"
-        sub={`${THEMES.length} 套内置 · ${themes.length} 套装来的`}
-        right={
-          <>
-            <button className="btn" onClick={() => setMaking(true)} data-act="theme-make">
-              <Icon name="share" /> 做一个
-            </button>
-            <button className="btn primary" onClick={() => setInstalling(true)} data-act="theme-install-open">
-              <Icon name="plus" /> 安装主题
-            </button>
-          </>
-        }
-      />
+    <div className={embedded ? '' : 'page'}>
+      {embedded ? (
+        <div className="row" style={{ marginBottom: 12 }}>{actions}</div>
+      ) : (
+        <Topbar
+          title="主题中心"
+          sub={`${THEMES.length} 套内置 · ${themes.length} 套装来的`}
+          right={actions}
+        />
+      )}
 
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.7 }}>
         主题包就是一个 <code>.json</code> 文件 —— 别人把配色存成文件发给你，装进来就能用。

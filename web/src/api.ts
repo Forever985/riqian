@@ -9,6 +9,7 @@ import type {
   AccountItem, AlarmItem, AppFacts, DraftItem, EncourageItem, HabitStatData, LedgerData, LedgerInsight,
   PomoInsight, PomoDay, PomoMonth, RankData, RankExtraData, RecurItem, ReviewDay, ReviewRange, Settings, SummaryRow, TagCount,
   Template, Todo, TodoList, TodoSortMode, UserProfile, VaultQa, VaultStatus, DiagStats,
+  Wish, WishStats,
   DrawingMeta, DrawingFull, Jar, JarDetail, JarPreset,
 } from './types';
 import type { ImportedFont } from './lib/fonts';
@@ -27,15 +28,56 @@ declare global {
   }
 }
 
-const HOST: HostBridge | null = window.chrome?.webview ?? null;
+/**
+ * 安卓宿主桥。
+ *
+ * 安卓那边是 WebView + @JavascriptInterface：调用是**同步**的，
+ * window.RiqianHost.call(json) 直接把结果字符串返回。
+ * 和 WebView2 的 postMessage 完全是两种形态，但对外都包成 Promise，
+ * 上面 4 万行界面代码一行都不用改 —— 这正是「换壳不重写」能成立的关键。
+ */
+interface AndroidHost {
+  call: (payload: string) => string;
+}
+
+declare global {
+  interface Window {
+    RiqianHost?: AndroidHost;
+  }
+}
+
+const WEBVIEW2: HostBridge | null = window.chrome?.webview ?? null;
+const ANDROID: AndroidHost | null = (typeof window !== 'undefined' && window.RiqianHost) || null;
+
+/** 桌面形态的桥（安卓为 null） */
+const HOST = WEBVIEW2;
 
 let seq = 0;
 const pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
 
 function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
   return new Promise<T>((res, rej) => {
+    /*
+     * 安卓：同步调用，拿到什么就是什么。
+     *
+     * 注意这里包了 try —— JavascriptInterface 那头如果抛异常，
+     * 传回来的是一段 JSON {ok:false,err}，但连接本身也可能断（页面正在卸载）。
+     * 不包的话这个 Promise 永远不会 settle，界面就卡在「加载中」。
+     */
+    if (ANDROID) {
+      try {
+        const raw = ANDROID.call(JSON.stringify({ id: ++seq, m: method, a: args }));
+        const d = JSON.parse(raw) as { ok?: boolean; data?: unknown; err?: string } | null;
+        if (d && d.ok) res(d.data as T);
+        else rej(new Error((d && d.err) || '出错了'));
+      } catch (e) {
+        rej(e instanceof Error ? e : new Error(String(e)));
+      }
+      return;
+    }
+
     if (!HOST) {
-      rej(new Error('需要在桌面程序中运行'));
+      rej(new Error('需要在日签程序里运行（浏览器直接打开没有数据）'));
       return;
     }
     const id = ++seq;
@@ -56,7 +98,9 @@ if (HOST) {
   });
 }
 
-export const hasHost = !!HOST;
+export const hasHost = !!(HOST || ANDROID);
+/** 当前是不是在手机端跑（有些按钮在手机上该换文案或隐藏） */
+export const isAndroid = !!ANDROID;
 
 /* ---------------- 强类型封装 ---------------- */
 
@@ -102,7 +146,8 @@ export const api = {
     /** 只改背景；tone 省略 = 不动调色，传空串 = 恢复原样 */
     bg: (date: DateKey, bg: string, tone?: string) =>
       rpc<{ ok: boolean }>('entry.bg', tone === undefined ? { date, bg } : { date, bg, tone }),
-    remove: (date: DateKey) => rpc<{ ok: boolean }>('entry.delete', { date }),
+    /** 硬删除这一天（连同各模块内容、标签、关联、历史版本），没有回收站 */
+    remove: (date: DateKey) => rpc<{ ok: boolean; err?: string }>('entry.delete', { date }),
   },
 
   rev: {
@@ -279,7 +324,8 @@ export const api = {
     calendar: (ym: string) => rpc<CalendarDay[]>('stats.calendar', { ym }),
     /** 第 182 条：按月汇总，给年/月快跳面板打点用 */
     calMonths: () => rpc<CalendarMonth[]>('stats.calMonths'),
-    onThisDay: () => rpc<OnThisDay[]>('onthisday'),
+    /** #249：传哪一天就算哪一天的历史上今天；不传 = 今天 */
+    onThisDay: (date?: string) => rpc<OnThisDay[]>('onthisday', date ? { date } : {}),
   },
 
   exportAs: (kind: 'json' | 'md' | 'csv' | 'html') =>
@@ -656,6 +702,18 @@ export const api = {
     save: (p: { id?: string; date: string; title: string; note?: string; kind?: string }) =>
       rpc<{ ok: boolean; id?: string; err?: string }>('milestone.save', p),
     delete: (id: string) => rpc<{ ok: boolean }>('milestone.delete', { id }),
+  },
+
+  /* #250：愿望单。金额一律传「分」，显示才换元 */
+  wish: {
+    list: () => rpc<Wish[]>('wish.list'),
+    save: (p: {
+      id?: string; title: string; priceCents: number; note?: string;
+      url?: string; priority?: number; targetDate?: string;
+    }) => rpc<{ ok: boolean; id?: string; err?: string }>('wish.save', p),
+    done: (id: string, done: number) => rpc<{ ok: boolean }>('wish.done', { id, done }),
+    remove: (id: string) => rpc<{ ok: boolean }>('wish.delete', { id }),
+    stats: () => rpc<WishStats>('wish.stats'),
   },
 
   /* 第 117 条：跨模块搜索 */

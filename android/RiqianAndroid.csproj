@@ -1,0 +1,127 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    日签 · 安卓版。
+
+    设计取向：**这不是重写，是换壳**。
+    数据层（Db*.cs，13,029 行）和前端产物（wwwroot/index.html）与 Windows 版
+    是同一份文件，不是复制品 —— 用 Link 直接引用仓库根目录的源文件。
+    复制一份过来的做法看着省事，但两个副本必然分叉：改了一个 bug 另一个还在，
+    而"数据和界面在手机上跟电脑上不一样"这种问题极难被当成 bug 报出来。
+
+    所以本项目的原则：
+      · 任何被两端共用的代码，都以仓库根目录那份为准
+      · 只在「平台确实不同」的地方分叉（剪贴板、文件选择器、数据目录）
+      · 分叉点全部收在 Platform.cs 的内容里，不散落
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RiqianAndroid</AssemblyName>
+    <RootNamespace>Riqian</RootNamespace>
+
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <ApplicationId>com.riqian.journal</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>12.9.6</ApplicationDisplayVersion>
+
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <RunAOTCompilation>false</RunAOTCompilation>
+
+    <!--
+      RuntimeIdentifiers 不写死：arm64-v8a 覆盖现在的手机，
+      x86_64 是为了能在模拟器上跑。两者都带会让 APK 大一倍（约 50MB），
+      但为了让"能在模拟器里验证"这件事成立，这个体积是值得的。
+      真要瘦身时再按发布渠道拆 split APK。
+    -->
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+
+    <EnableDefaultAndroidResourceItems>true</EnableDefaultAndroidResourceItems>
+    <AndroidUseDefaultAapt2>true</AndroidUseDefaultAapt2>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      SQLite 必须显式指定 bundle_e_sqlite3，不能用默认的 bundle_green。
+      原因：Android 16（API 36）起要求原生库按 16KB 内存页对齐，
+      4KB 对齐的 libe_sqlite3.so 会在真机上加载失败或崩溃（构建期报 XA0141）。
+      SQLitePCLRaw 从 2.1.10 起才重新对齐，这里直接用 3.x。
+    -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.*" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      数据层：直接引用仓库根目录的源文件，不复制。
+      数量看着多，但这正是"不重写"的价值所在 —— 这 13,029 行一行都不用改。
+      Platform.cs / Platform.Windows.cs 不在列表里：前者是契约，
+      后者的 GDI+ 实现在安卓上不能编译。
+    -->
+    <Compile Include="..\Db.cs" Link="shared\Db.cs" />
+    <Compile Include="..\DbV7.cs" Link="shared\DbV7.cs" />
+    <Compile Include="..\DbV8.cs" Link="shared\DbV8.cs" />
+    <Compile Include="..\DbV9.cs" Link="shared\DbV9.cs" />
+    <Compile Include="..\DbV10.cs" Link="shared\DbV10.cs" />
+    <Compile Include="..\DbV11.cs" Link="shared\DbV11.cs" />
+    <Compile Include="..\DbV12.cs" Link="shared\DbV12.cs" />
+    <Compile Include="..\DbV13.cs" Link="shared\DbV13.cs" />
+    <Compile Include="..\DbSearch.cs" Link="shared\DbSearch.cs" />
+    <Compile Include="..\DbQuick.cs" Link="shared\DbQuick.cs" />
+    <Compile Include="..\DbFonts.cs" Link="shared\DbFonts.cs" />
+    <Compile Include="..\DbMilestones.cs" Link="shared\DbMilestones.cs" />
+    <Compile Include="..\DbWishes.cs" Link="shared\DbWishes.cs" />
+    <Compile Include="..\Festivals.cs" Link="shared\Festivals.cs" />
+    <!-- 契约（唯一出口），两端共用 -->
+    <Compile Include="..\Platform.cs" Link="shared\Platform.cs" />
+    <!--
+      RPC 分发：和桌面版**同一份文件**。
+      原来这 280 个方法散在 MainForm 的六个 partial 文件里，安卓根本没法复用。
+      抽出来之后，桌面只留一层 Dispatch 委托，两端跑的是同一份实现 ——
+      不会再出现「某个接口手机上没反应、电脑上正常」这种漂移。
+    -->
+    <Compile Include="..\RpcDispatcher.cs" Link="shared\RpcDispatcher.cs" />
+    <Compile Include="..\Host.cs" Link="shared\Host.cs" />
+    <Compile Include="..\RpcArgs.cs" Link="shared\RpcArgs.cs" />
+    <Compile Include="..\RpcCatalog.cs" Link="shared\RpcCatalog.cs" />
+    <Compile Include="..\TextUtil.cs" Link="shared\TextUtil.cs" />
+    <Compile Include="..\IShell.cs" Link="shared\IShell.cs" />
+    <Compile Include="..\Diag.cs" Link="shared\Diag.cs" />
+    <Compile Include="..\SelfCheck.cs" Link="shared\SelfCheck.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      界面产物：与 Windows 版同一份 index.html。
+      它已经是 Vite 的完整产物（内联了 JS/CSS），所以这里当普通资产打包，
+      不需要再跑一次前端构建。
+    -->
+    <AndroidAsset Include="..\wwwroot\index.html" Link="assets\index.html" />
+
+    <!--
+      KaTeX 字体：**必须一起打进去**。
+      index.html 里有 20 处 url(fonts/KaTeX_*.woff2)。桌面上 wwwroot 整个目录
+      都挂在虚拟主机下，字体自然能取到；安卓只打了 index.html，
+      缺字体时公式不会报错，只会**悄悄用系统字体渲染** ——
+      符号错位、希腊字母变成方框，而用户根本不知道是字体没打进去。
+      304 KB，没有省的理由。
+    -->
+    <AndroidAsset Include="..\wwwroot\fonts\**" Link="assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    与 Windows 版一样的诊断：缺产物就说人话，别让人对着 MSB 错误码猜。
+  -->
+  <Target Name="CheckFrontendBuilt" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <_UiHtml>$(MSBuildProjectDirectory)\..\wwwroot\index.html</_UiHtml>
+    </PropertyGroup>
+    <Warning
+      Condition="!Exists('$(_UiHtml)')"
+      Text="wwwroot/index.html 不存在。先在 web 目录跑 npm run build（安卓版和桌面版用的是同一份产物）。" />
+  </Target>
+
+</Project>

@@ -21,9 +21,15 @@
       三个数字互不相同，用户看属性看到一个版本、看更新日志又看到另一个。
       统一到 12.9.5（跟 changelog 对齐）。改版本只改这一处。
     -->
-    <Version>12.9.5</Version>
-    <FileVersion>12.9.5.0</FileVersion>
-    <AssemblyVersion>12.9.5.0</AssemblyVersion>
+    <Version>12.9.6</Version>
+    <!--
+      这两个必须跟着 <Version> 一起改。
+      2026-11-11 发现日志里报的版本是 12.9.5，而 csproj 的 <Version> 已经是 12.9.6 ——
+      因为 Diag 的 Snapshot 读的是**程序集版本**，而 AssemblyVersion 忘了同步。
+      后果不大但很误导：拿着 12.9.6 的包去查 12.9.5 的 bug，或者反过来。
+    -->
+    <FileVersion>12.9.6.0</FileVersion>
+    <AssemblyVersion>12.9.6.0</AssemblyVersion>
     <Product>日签 · 打卡日记本</Product>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!--
@@ -42,6 +48,20 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.*" />
+  </ItemGroup>
+
+  <!--
+    android/ 是**独立的项目目录**（有自己的 csproj），要从桌面项目的默认通配里排除。
+
+    不排除会怎样：SDK 风格的 csproj 默认把 **/*.cs 全收进来，于是
+    android\MainActivity.cs 也被编进桌面程序，报一堆
+    「未能找到类型或命名空间名 Android」。这个错误信息完全指错方向 ——
+    它看起来像 android workload 没装好，实际上是项目边界没划清。
+  -->
+  <ItemGroup>
+    <Compile Remove="android\**" />
+    <None Remove="android\**" />
+    <EmbeddedResource Remove="android\**" />
   </ItemGroup>
 
   <ItemGroup>

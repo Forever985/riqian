@@ -1006,6 +1006,12 @@ export function installFlushHook() {
       case 'nav:settings': void st.go('settings'); break;
       case 'nav:home': void st.go('welcome'); break;
       case 'lock': st.lockApp(); break;
+      /*
+       * 安卓专用：系统文件选择器是异步的，RPC 只能立刻返回「pending」。
+       * 真正导完库之后，宿主用这条命令让界面刷新媒体列表 ——
+       * 否则用户选完文件回到界面，列表还是旧的，会以为没导进去。
+       */
+      case 'media:changed': void st.reloadMedia(); break;
       default: break;
     }
   };

@@ -83,11 +83,35 @@ namespace Riqian
             catch { }
         }
 
-        private void QuitApp()
+        /// <summary>
+        /// 托盘「退出」走这里。
+        ///
+        /// ⚠️ 这里必须自己跑一遍 GracefulShutdownAsync，不能指望 OnClosing：
+        /// 它第一行就是 `if (reallyExit) return;`，而这里正要先置 reallyExit。
+        /// 以前就是这么漏的 —— 从托盘退出时 db 从来没被 Dispose 过，
+        /// WAL 也就从来没 checkpoint 过。
+        ///
+        /// `async void` 在这里可接受（事件处理器的终点，没人 await 它），
+        /// 但整段必须自己 try/catch，否则异常会直接冒到全局处理器弹框。
+        /// </summary>
+        private async void QuitApp()
         {
-            reallyExit = true;
-            try { tray.Visible = false; tray.Dispose(); } catch { }
-            Close();
+            try
+            {
+                if (closing) { Close(); return; }   // 另一条路径已在关，别关两遍
+
+                closing = true;
+                reallyExit = true;
+                try { tray.Visible = false; tray.Dispose(); } catch { }
+
+                await GracefulShutdownAsync();
+                Close();
+            }
+            catch (Exception ex)
+            {
+                Diag.Error("app.exit", "退出过程中出错", ex);
+                try { Close(); } catch { }
+            }
         }
 
         private async void StartPomoFromTray(int minutes)
@@ -194,124 +218,23 @@ namespace Riqian
 
         /* ================= RPC 分发 ================= */
 
-        /// <summary>返回 null 表示不归这里管，交回主 switch。</summary>
-        private object V7Dispatch(string m, JsonElement a)
+        /// <summary>
+        /// 可用工作区尺寸。
+        ///
+        /// 单独包一层是因为它原来是
+        /// <c>Screen.PrimaryScreen.WorkingArea.Width</c> 直接写在 case 里 ——
+        /// Screen 是 WinForms 专有的，安卓那边没有对应概念（那边是整屏）。
+        /// 放进 IShell 会让接口变胖（只为这一个返回值），所以留在壳这一侧，
+        /// 由各自的 partial 提供。安卓版见 android\MainFormAndroid.cs。
+        /// </summary>
+        private object ScreenInfo()
         {
-            /* ---- 提醒与窗口 ---- */
-            if (m == "notify.push") return NotifyPush(a);
-            if (m == "app.hide") { _ = HideToTray(); return new { ok = true }; }
-            if (m == "app.quit") { QuitApp(); return new { ok = true }; }
-            if (m == "app.minimize") { WindowState = FormWindowState.Minimized; return new { ok = true }; }
-            if (m == "app.tray") { InitTray(); return new { ok = true }; }
-            if (m == "app.screen") return new { w = Screen.PrimaryScreen.WorkingArea.Width, h = Screen.PrimaryScreen.WorkingArea.Height };
-
-            /* ---- 音频试听（返回本地路径，前端用 <audio> 播） ---- */
-            if (m == "notify.test")
-            {
-                // 连点不再叠窗：1.2 秒内只认一次；测试窗不置顶，免得盖住别的窗口让人以为 alt+tab 失效
-                var now = Environment.TickCount64;
-                if (now - _lastToastTest < 1200) return new { ok = true, skipped = true };
-                _lastToastTest = now;
-                ShowToast("日签 · 提醒测试", "如果你看到这个窗口，说明桌面提醒是通的。", "focus", 5, false);
-                return new { ok = true };
-            }
-
-            /* ---- 备忘录 ---- */
-            if (m == "habit.reorder")
-            {
-                var arr = a.TryGetProperty("ids", out var ia) && ia.ValueKind == JsonValueKind.Array
-                    ? ia.EnumerateArray().Select(x => x.GetString()).ToArray()
-                    : new string[0];
-                return db.HabitReorder(arr);
-            }
-            if (m == "notebooks.list") return db.Notebooks();
-            if (m == "notebook.add") return db.NotebookAdd(S(a, "name"), S(a, "color"));
-            if (m == "notebook.update") return db.NotebookUpdate(S(a, "id"), S(a, "name"), S(a, "color"));
-            if (m == "notebook.delete") return db.NotebookDelete(S(a, "id"));
-            if (m == "notes.list") return db.Notes(S(a, "notebookId"), S(a, "q"), I(a, "limit", 300));
-            if (m == "note.get") return db.NoteGet(S(a, "id"));
-            if (m == "note.save") return db.NoteSave(S(a, "id"), S(a, "notebookId"), S(a, "title"), S(a, "body"), I(a, "pinned", 0),
-                /* 第 128 条：颜色 / 图标。不传 = null，等于「这次别动」，自动保存不会把色点抹掉 */
-                S(a, "color"), S(a, "icon"));
-            if (m == "note.delete") return db.NoteDelete(S(a, "id"));
-            if (m == "note.restore") return db.NoteRestore(S(a, "id"));
-            if (m == "notes.trash") return db.NotesTrash();
-            if (m == "export.note") return ExportNote(S(a, "id"));
-
-            /* ---- 用户中心 ---- */
-            if (m == "user.get") return db.UserGet();
-            if (m == "user.save") return db.UserSave(S(a, "nickname"), S(a, "signature"), S(a, "avatar"),
-                                                   S(a, "birthday"), S(a, "lunarBirthday"));
-
-            /* ---- 密码 ---- */
-            if (m == "vault.status") return db.VaultStatus();
-            if (m == "vault.setMain") return db.VaultSetMain(S(a, "password"));
-            if (m == "vault.clearMain") return db.VaultClearMain(S(a, "password"));
-            if (m == "vault.add") return db.VaultAdd(S(a, "scope"), S(a, "target"), S(a, "label"), S(a, "password"));
-            if (m == "vault.remove") return db.VaultRemove(S(a, "id"));
-            if (m == "vault.check") return db.VaultCheck(S(a, "scope"), S(a, "target"));
-            if (m == "vault.unlock") return db.VaultUnlock(S(a, "scope"), S(a, "target"), S(a, "password"), I(a, "minutes", 0));
-            if (m == "vault.lock") return db.VaultLock();
-
-            /* ---- 缓存 ---- */
-            if (m == "cache.stats") return db.CacheStats();
-            if (m == "cache.prune") return db.CachePrune(I(a, "days", 0), I(a, "maxMB", 0));
-            if (m == "cache.clear") return db.CacheClear(S(a, "what", "cache"));
-            if (m == "cache.open") { OpenPath(CacheDir); return new { ok = true }; }
-
-            /* ---- 第 42 条：桌面常驻便签 ---- */
-            if (m == "sticky.open") return StickyOpen(S(a, "id"));
-            if (m == "sticky.close") return StickyClose(S(a, "id"));
-            if (m == "sticky.list") return StickyList();
-
-            /* ---- 设置导出导入 ---- */
-            if (m == "settings.export") return db.SettingsExport();
-            if (m == "settings.import") return db.SettingsImport(S(a, "json"));
-
-            /* ---- 节日 ---- */
-            if (m == "festival.upcoming") return db.FestivalsUpcoming(I(a, "days", 30));
-            if (m == "festival.add") return db.FestivalAdd(S(a, "name"), S(a, "date"), I(a, "lunarMonth", 0), I(a, "lunarDay", 0));
-            if (m == "festival.delete") return db.FestivalDelete(S(a, "id"));
-            if (m == "festival.day") return db.DayFestival(S(a, "date"));
-            if (m == "festival.month") return db.FestivalMonth(S(a, "ym"));
-            if (m == "festival.lunar") return Festivals.LunarText(DateTime.Today);
-
-            /* ---- 导出 HTML ---- */
-            if (m == "export.html") return db.ExportHtml();
-
-            /* ---- 待办：带重复规则 ---- */
-            if (m == "todo.add")
-            {
-                var r = db.TodoAdd2(S(a, "title"), S(a, "due", ""), S(a, "dueTime", ""),
-                                    I(a, "priority", 1), S(a, "note", ""), S(a, "listId", ""));
-                var id = (string)r.GetType().GetProperty("id").GetValue(r);
-                db.TodoSetRepeat(id, S(a, "repeat", ""));
-                return r;
-            }
-            if (m == "todo.repeat") { db.TodoSetRepeat(S(a, "id"), S(a, "repeat")); return new { ok = true }; }
-            if (m == "todo.movelist") { db.TodoSetList(S(a, "id"), S(a, "listId")); return new { ok = true }; }
-            if (m == "todos.recycle") return db.TodosRecycle();
-            if (m == "todo.restore") return db.TodoRestore(S(a, "id"));
-            if (m == "todo.purge") return db.TodoPurge(S(a, "id"));
-            if (m == "todo.purgeAll") return db.TodoPurgeAll();
-
-            /* ---- 倒计时：带重复规则 ---- */
-            if (m == "cd.add")
-            {
-                return db.CdAdd2(S(a, "title"), S(a, "date"), S(a, "repeat", ""), S(a, "color"), S(a, "note", ""));
-            }
-            if (m == "cd.repeat") { db.CdSetRepeat(S(a, "id"), S(a, "repeat")); return new { ok = true }; }
-
-            /* ---- 音乐库 ---- */
-            if (m == "music.import") return MusicImport();
-            if (m == "music.addUrl") return db.MediaAddUrl(S(a, "url"), S(a, "name"));
-            if (m == "music.list") return db.MediaByKind("audio,video");
-            /* 第 26/27 条：把网络链接真的下载到本地。之前只有开关没有下载代码。 */
-            if (m == "media.cacheUrl") return db.MediaCacheUrl(S(a, "id"));
-            if (m == "media.cacheAll") return db.MediaCacheAll();
-
-            return null;
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            return new { w = wa.Width, h = wa.Height };
         }
+
+        /// <summary>返回 null 表示不归这里管，交回主 switch。</summary>
+        /* V7Dispatch 已搬到 RpcDispatcher.cs（桌面与安卓共用同一份实现），见该文件。 */
 
         /* ================= 音乐导入 ================= */
 
@@ -399,6 +322,15 @@ namespace Riqian
             _life.Interval = 1000;
             _life.Tick += (s, e) =>
             {
+                /*
+                 * 必须先确认窗体还活着。
+                 *
+                 * 这个 tick 会调 Invalidate()，而它是要 Handle 的 —— 窗体已经
+                 * 被 Close()/Dispose() 之后调就是 ObjectDisposedException。
+                 * 定时器不会因为窗体释放而自动停（见下面 Dispose 的注释），
+                 * 所以这道判断是必须的，不是防御性冗余。
+                 */
+                if (!Alive()) { _life.Stop(); return; }
                 _left--;
                 Invalidate();
                 if (_left <= 0) FadeOut();
@@ -406,12 +338,81 @@ namespace Riqian
             _fade.Interval = 16;
             _fade.Tick += (s, e) =>
             {
-                if (_closing) { Opacity -= 0.12; if (Opacity <= 0.02) { _fade.Stop(); Close(); } }
-                else { Opacity += 0.12; if (Opacity >= 0.98) { Opacity = 0.98; _fade.Stop(); } }
+                /*
+                 * 这里是 **11-02 / 11-09 / 11-10 三次界面线程崩溃的现场**。
+                 *
+                 * 堆栈特征：set_Opacity → get_Handle → CreateHandle → ObjectDisposedException
+                 * "Object name: 'Riqian.ToastForm'"。
+                 *
+                 * 触发条件：提醒窗正在淡入（约 130 ms）时被关掉 ——
+                 * 用户点了它，或者紧接着又来了一个提醒（ShowToast 会关掉上一个）。
+                 * 窗体的 Handle 没了，_fade 定时器却还在按 16 ms 一跳，
+                 * 下一跳就去 set_Opacity，于是崩在界面线程上、弹一个警告框。
+                 *
+                 * 修法两条：① 这里先判 Alive()；② Dispose 里把定时器停掉并释放。
+                 * 只做其中一条都还会漏 —— 判活管"关掉之后的下一跳"，
+                 * 释放管"定时器本身别继续占着消息循环"。
+                 */
+                if (!Alive()) { _fade.Stop(); return; }
+
+                if (_closing)
+                {
+                    // 先算再赋值：算出来已经到 0 就不必再写一次属性（写属性才会碰 Handle）
+                    var next = Opacity - 0.12;
+                    if (next <= 0.02) { _fade.Stop(); SafeClose(); }
+                    else Opacity = next;
+                }
+                else
+                {
+                    var next = Opacity + 0.12;
+                    if (next >= 0.98) { Opacity = 0.98; _fade.Stop(); }
+                    else Opacity = next;
+                }
             };
 
-            Click += (s, e) => { _onClick?.Invoke(); Close(); };
-            foreach (Control c in Controls) c.Click += (s, e) => { _onClick?.Invoke(); Close(); };
+            Click += (s, e) => { _onClick?.Invoke(); SafeClose(); };
+            foreach (Control c in Controls) c.Click += (s, e) => { _onClick?.Invoke(); SafeClose(); };
+        }
+
+        /// <summary>窗体还活着吗。IsDisposed 和 Disposing 两个都要看 ——
+        /// Dispose 过程中 IsDisposed 还是 false，但 Handle 已经不能碰了。</summary>
+        private bool Alive() => !IsDisposed && !Disposing;
+
+        /// <summary>
+        /// 两个定时器是否还在跑。**只给自检用**（ToastSelfTest）。
+        ///
+        /// 为什么需要这个可见性：从外面「连发两个提醒」复现那个
+        /// ObjectDisposedException 试了二十轮一次没中 —— 要撞上
+        /// 「IsDisposed 已为 true、Handle 还没清」那几十毫秒，概率太低。
+        /// 与其留一个常年撞不到 bug 的绿测试，不如直接断言修复真正保证的事：
+        /// **窗体关掉之后，定时器不该还在跑。**
+        /// 这一条是确定性的：没停就是没停，骗不了人。
+        /// </summary>
+        internal bool TimersStillRunning => _life.Enabled || _fade.Enabled;
+
+        private void SafeClose()
+        {
+            try { if (Alive()) Close(); } catch { }
+        }
+
+        /// <summary>
+        /// 释放时把两个定时器停掉并扔掉。
+        ///
+        /// 为什么必须写：`System.Windows.Forms.Timer` **不会**因为宿主窗体被 Dispose
+        /// 而自动停。它有自己的隐藏窗口，只要不 Stop 就继续按 16 ms 发 tick，
+        /// 于是窗体没了、tick 还在跑 → 每次都在访问已释放对象。
+        ///
+        /// 顺带解决一个泄漏：Timer 不释放会一直占着一个原生窗口句柄。
+        /// 提醒窗在一天里可能弹很多次，这个泄漏是累加的。
+        /// </summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                try { _life.Stop(); _life.Dispose(); } catch { }
+                try { _fade.Stop(); _fade.Dispose(); } catch { }
+            }
+            base.Dispose(disposing);
         }
 
         protected override void OnShown(EventArgs e)

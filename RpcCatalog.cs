@@ -267,6 +267,12 @@ namespace Riqian
             M("milestone.list",    "大事记", "里程碑列表", ""),
             M("milestone.save",    "大事记", "存里程碑", "id?, date, title, note?", true),
             M("milestone.delete",  "大事记", "删里程碑", "id", true),
+            /* #250：愿望单。金额一律用「分」，不用元 —— 浮点在钱上会差几分 */
+            M("wish.list",         "愿望单", "全部愿望（未实现在前）", ""),
+            M("wish.save",         "愿望单", "新建或修改一条愿望", "id?, title, priceCents, note?, url?, priority?, targetDate?", true),
+            M("wish.done",         "愿望单", "标记已实现 / 改回未实现", "id, done: 0|1", true),
+            M("wish.delete",       "愿望单", "移出愿望单（软删除）", "id", true),
+            M("wish.stats",        "愿望单", "汇总：件数与金额", ""),
             M("music.list",        "音乐", "音乐列表", ""),
             M("music.import",      "音乐", "导入本地音乐", "paths: 数组", true),
             M("music.addUrl",      "音乐", "加网络音乐", "url, name?", true),

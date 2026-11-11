@@ -281,7 +281,7 @@ function ruleExists(rules: { scope: string; target: string }[], scope: string, t
  * scope / target 与 vault 规则一一对应（app / todos / diary / diaryRange / notebook / note …）。
  */
 export function Guarded({
-  scope, target = '', label, children, mode = 'block',
+  scope, target = '', label, children, mode = 'block', onUnlocked,
 }: {
   scope: string;
   target?: string;
@@ -289,6 +289,16 @@ export function Guarded({
   children: ReactNode;
   /** block = 整块替换；overlay = 内容模糊 + 覆盖 */
   mode?: 'block' | 'overlay';
+  /**
+   * 解锁成功后立刻回调。
+   *
+   * 为什么必须有这个钩子：数据层现在会**在锁着的时候返回空内容**
+   * （#244 衍生：entry.get 也堵上了）。如果解锁后不重新拉一次，
+   * 前端手里的草稿还是那份空的 —— 用户看到的是一片空白，
+   * 而且一打字就会把空草稿写回库，**把真实内容覆盖掉**。
+   * 锁是为了保护内容，不能反过来造成丢失。
+   */
+  onUnlocked?: () => void;
 }) {
   const vault = useStore((s) => s.vault);
   const rules = vault?.rules ?? [];
@@ -314,15 +324,17 @@ export function Guarded({
 
   if (state === 'checking') return <div className="empty small">检查权限…</div>;
   if (state === 'ok') return <>{children}</>;
+  /* 解锁成功：先让外层把数据重新拉回来，再放行内容 */
+  const ok = () => { setState('ok'); onUnlocked?.(); };
   if (mode === 'overlay') {
     return (
       <div className="guarded-wrap">
         <div className="guarded-blur">{children}</div>
-        <div className="guarded-mask"><UnlockBox scope={scope} target={target} label={label} onOk={() => setState('ok')} /></div>
+        <div className="guarded-mask"><UnlockBox scope={scope} target={target} label={label} onOk={ok} /></div>
       </div>
     );
   }
-  return <UnlockBox scope={scope} target={target} label={label} onOk={() => setState('ok')} />;
+  return <UnlockBox scope={scope} target={target} label={label} onOk={ok} />;
 }
 
 /** 全软件锁屏 */

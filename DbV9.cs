@@ -77,11 +77,18 @@ namespace Riqian
         /// <summary>草稿箱：有内容但还没定稿的日子，最近的在前。</summary>
         public object EntryDrafts()
         {
-            return Rows(@"SELECT date,title,plain,updated_at,fav FROM entries
+            var rows = Rows(@"SELECT date,title,plain,updated_at,fav FROM entries
                           WHERE deleted_at IS NULL AND IFNULL(status,'draft')='draft'
                             AND (IFNULL(plain,'')<>'' OR IFNULL(title,'')<>'')
-                          ORDER BY date DESC LIMIT 300")
-                .Select(r => new
+                          ORDER BY date DESC LIMIT 300");
+            /*
+             * #244 衍生：草稿箱里也不能露出加锁那天的标题与摘要。
+             *
+             * 这里是「过滤」而不是「打码」——草稿箱的用途是「挑一篇继续写」，
+             * 留一条读不出内容的条目只会让人以为数据坏了。
+             * 和 search.all 的处理保持一致。
+             */
+            return rows.Where(r => !IsDiaryLocked(Str(r["date"]))).Select(r => new
                 {
                     date = Str(r["date"]),
                     title = Str(r["title"]),

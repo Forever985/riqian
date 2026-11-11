@@ -82,6 +82,19 @@ namespace Riqian
             ["entries"] = new[] { "date", "bg", "plain", "fav", "updated_at", "title", "status", "published_at", "bg_tone", "deleted_at" },
             ["alarms"] = new[] { "id", "mode", "advance", "interval_min", "sound", "snooze_until", "created_at", "last_fire", "repeat" },
             ["vault"] = new[] { "id", "hash", "salt", "hint", "scope", "target", "label", "rev" },
+            /*
+             * #250：愿望单。
+             *
+             * 加进这份清单是**必须的**，不是顺手。本项目已经因为「新表/新列只在
+             * 某个接口里懒建」栽过两次（jars、countdowns.sort）：老库看不出，
+             * 全新装机一打开就整页报错。这张表也一样，只要它没挂进启动迁移链，
+             * 或者列名和查询对不上，就是在打新用户。
+             */
+            ["wishes"] = new[]
+            {
+                "id", "title", "note", "price_cents", "url", "priority", "target_date",
+                "done", "done_at", "created_at", "updated_at", "deleted_at", "rev",
+            },
         };
 
         /// <summary>
@@ -98,6 +111,10 @@ namespace Riqian
             ("模块列表",                         d => d.Modules()),
             ("设置全量",                         d => d.SettingsAll()),
             ("标签",                             d => d.Tags()),
+            /* #250：列在还得能查 —— ORDER BY done ASC, priority DESC 里
+               任何一个列名写错，这一页就是整块报错 */
+            ("愿望单列表（#250 新表）",           d => d.WishList()),
+            ("愿望单汇总",                       d => d.WishStats()),
         };
 
         /// <summary>

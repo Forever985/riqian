@@ -45,6 +45,21 @@ export function TodayView() {
   const isToday = date === todayKey();
   const published = (entry?.status || 'draft') === 'published';
   const titleOn = String(settings.entryTitleOn ?? '1') === '1';
+  /**
+   * #248：这一天在库里到底有没有东西。
+   *
+   * 只在真写过的时候才显示「删除」—— 空白天显示删除按钮，
+   * 点了等于删空气，还会让人以为「这一天原来有内容，被我删掉了」。
+   * entry.exists 是后端 EntryGet 给的原始判断，不是靠前端猜。
+   */
+  const hasContent = !!entry?.exists;
+  /**
+   * #249：要不要显示「那年今日」。
+   *
+   * 做成设置开关（`onThisDay`，默认开），因为它是右键那种「可以不要」的东西：
+   * 有人觉得翻旧账很温暖，有人觉得被打扰。默认开是因为大多数人不知道能关。
+   */
+  const showOtd = String(settings.onThisDay ?? '1') === '1';
 
   /** 保存状态：给一个确定的三种状态，而不是一直挂着「已保存」 */
   const saveChip = saveBad
@@ -57,7 +72,14 @@ export function TodayView() {
           ? { t: '已保存', c: 'var(--ok)' }
           : { t: '还没写', c: 'var(--ink3)' };
 
-  useEffect(() => { void api.stats.onThisDay().then(setOtd).catch(() => setOtd([])); }, [date]);
+  /*
+   * #249：跟着当前日期算，而不是永远算「今天」。
+   * 原来不带参数，后端就用 DateTime.Today —— 翻旧日记时右边显示的
+   * 是今天的历史上今天，跟正在看的这天毫无关系。
+   */
+  useEffect(() => {
+    void api.stats.onThisDay(date).then(setOtd).catch(() => setOtd([]));
+  }, [date]);
 
   /** 分享前先把没落盘的字写完，否则卡片里少了刚打的最后一句 */
   const openShare = async () => {
@@ -178,10 +200,45 @@ export function TodayView() {
                   className="btn sm"
                   title="给这一天的日记加密码：之后打开这天要先输密码"
                   onClick={async () => {
-                    await askProtect('diary', date, `${date} 这篇日记`);
-                    toast('已给这一天加密码');
+                    /*
+                     * #251：取消时不能提示「已加密码」。
+                     *
+                     * askProtect 内部会弹输入框，用户点取消时返回 false。
+                     * 原来这里不看返回值，直接 toast —— 用户取消了却被告知
+                     * 「已给这一天加密码」，然后再打开这天发现根本没锁，
+                     * 只会以为自己操作错了。提示必须跟着真实结果走。
+                     */
+                    const done = await askProtect('diary', date, `${date} 这篇日记`);
+                    if (done) toast('已给这一天加密码');
                   }}
                 >🔒 加锁</button>
+                {/*
+                 * #248：日记一直没有删除入口。
+                 *
+                 * 后端 entry.delete 和 api.entry.remove 从一开始就在，界面上却没地方点 ——
+                 * 用户想把写错的一天清掉，只能去「记录」里翻、或者干脆忍着。
+                 * 这种「能力有、入口没有」的功能等于没做。
+                 *
+                 * 后端是**硬删除**（连同 vals / revisions / entry_tags / links 一起清），
+                 * 没有回收站可回滚，所以这里必须双重确认，并把「删了什么」写清楚 ——
+                 * 只说「确定删除？」的话，用户并不知道历史版本也会一起没。
+                 */}
+                {hasContent ? (
+                  <button
+                    className="btn sm danger"
+                    title="删掉这一天的全部内容"
+                    onClick={async () => {
+                      if (!(await askConfirm(`删除 ${date} 这一天？`, {
+                        body: '正文、各模块的内容、标签、关联关系和历史版本都会一起删掉。\n\n这个操作没有回收站，删了找不回来。',
+                        ok: '删除这一天',
+                      }))) return;
+                      const r = await api.entry.remove(date).catch((e) => ({ ok: false, err: (e as Error).message }));
+                      if (!r.ok) { toast(r.err || '删除失败'); return; }
+                      await reloadEntry();
+                      toast(`已删除 ${date}`);
+                    }}
+                  >删除</button>
+                ) : null}
                 {isToday ? null : (
                   <button className="btn sm" onClick={() => void setDate(todayKey())}>回到今天</button>
                 )}
@@ -257,10 +314,15 @@ export function TodayView() {
               </div>
             </div>
 
-            {otd.length ? (
+            {/*
+              * #249：这块以前是 `otd.length ? 渲染 : 什么都不显示` —— 结果新用户
+              * 永远不知道有「那年今日」这回事（一年后才突然冒出来）。
+              * 现在空的时候也留一张卡，说清楚它是什么、什么时候会有内容。
+              */}
+            {showOtd ? (
               <div className="card">
                 <h3>那年今日</h3>
-                {otd.map((o) => (
+                {otd.length ? otd.map((o) => (
                   <div key={o.date} style={{ padding: '7px 0', borderBottom: '1px dashed var(--line2)' }}>
                     <div
                       className="small"
@@ -276,7 +338,12 @@ export function TodayView() {
                       {o.plain}
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <div className="empty small" style={{ lineHeight: 1.8 }}>
+                    这一天在往年还没有记录。<br />
+                    写得够久之后，同一天写过的东西会自动出现在这里。
+                  </div>
+                )}
               </div>
             ) : null}
 

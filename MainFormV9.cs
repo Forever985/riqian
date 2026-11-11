@@ -25,18 +25,6 @@ namespace Riqian
             catch (Exception ex) { Diag.Error("dispatch.v9", "v9 分发失败", ex); }
         }
 
-        private object V9Dispatch(string m, JsonElement a)
-        {
-            if (m == "entry.publish") return db.EntryPublish(S(a, "date"), I(a, "published", 1));
-            if (m == "entry.status") return db.EntryStatus(S(a, "date"));
-            if (m == "entry.drafts") return db.EntryDrafts();
-            if (m == "pomo.insight") return db.PomoInsight(I(a, "days", 30), SN(a, "from"), SN(a, "to"));
-            if (m == "pomo.day") return db.PomoDay(S(a, "date"));
-            if (m == "pomo.months") return db.PomoMonths();
-            if (m == "stats.calMonths") return db.CalendarMonths();
-            if (m == "feedback.save") return db.FeedbackSave(S(a, "text"), S(a, "contact"));
-            if (m == "app.facts") return db.AppFacts();
-            return null;
-        }
+        /* V9Dispatch 已搬到 RpcDispatcher.cs（桌面与安卓共用同一份实现），见该文件。 */
     }
 }

@@ -262,6 +262,44 @@ CREATE TABLE IF NOT EXISTS vault_qa(
             var todoDone = Int(Scalar("SELECT COUNT(*) FROM todos WHERE done=1 AND substr(done_at,1,10)=$d", ("$d", date)));
             var todoOpen = Int(Scalar("SELECT COUNT(*) FROM todos WHERE done=0 AND trashed=0 AND deleted_at IS NULL AND due<=$d", ("$d", date)));
 
+            /*
+             * #244 衍生：这一天加了密码，就不许从这里把正文摘出去。
+             *
+             * 「总结」页是 <Guarded scope="diary"> 包的，但那个 Guarded 只有在
+             * 存在「整段日记」规则（scope=diary 且 target 为空）时才会挡；
+             * 用户给**某一天**单独加锁（target=2026-11-03）时它根本拦不住。
+             * 实测：加锁的那天 review.day 直接返回了全文和标签。
+             *
+             * 这里把日期相关的内容全部抹掉，只留「这天有内容但被锁着」这个事实 ——
+             * 连 chars 都要清，因为字数和标签也是信息（「原来那天写了两个字」）。
+             * 心情/天气同理：它们属于日记内容的一部分。
+             */
+            var locked = IsDiaryLocked(date);
+            if (locked)
+            {
+                return new
+                {
+                    date,
+                    chars = 0,
+                    plain = "",
+                    oneLine = "",
+                    fav,
+                    mood = 0,
+                    weather = "",
+                    tags = new List<string>(),
+                    images = 0,
+                    habitDone,
+                    habitTotal,
+                    pomoMinutes,
+                    pomoCount,
+                    todoDone,
+                    todoOpen,
+                    hasEntry = e != null,
+                    locked = true,
+                    updatedAt = e == null ? "" : Str(e["updated_at"]),
+                };
+            }
+
             return new
             {
                 date,
@@ -280,6 +318,7 @@ CREATE TABLE IF NOT EXISTS vault_qa(
                 todoDone,
                 todoOpen,
                 hasEntry = e != null,
+                locked = false,
                 updatedAt = e == null ? "" : Str(e["updated_at"]),
             };
         }
@@ -305,6 +344,26 @@ CREATE TABLE IF NOT EXISTS vault_qa(
 
             var entries = Rows(@"SELECT date,plain,fav FROM entries
                                  WHERE date>=$f AND date<=$t ORDER BY date", ("$f", from), ("$t", to));
+
+            /*
+             * #244 衍生：区间总结里也要把加锁的日子剔干净。
+             *
+             * 这里不只是「正文」——`byDay.oneLine` 是每日摘要、`totalChars` 是字数、
+             * `activeDays` 是「写过几天」、`moodDist` / `tagsTop` 是心情与标签分布。
+             * 少了任何一项，「那几天写过东西」这件事就会从统计数字里漏出来：
+             * 比如区间里明明 4 个活跃日，用户只看见 3 天的内容，多出来那天是谁一目了然。
+             *
+             * 所以锁住的日期整体不参与统计 —— 宁可让数字变小，也不让它的存在被推出来。
+             */
+            var lockedDates = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var r in entries)
+            {
+                var dd = Str(r["date"]);
+                if (IsDiaryLocked(dd)) lockedDates.Add(dd);
+            }
+            if (lockedDates.Count > 0)
+                entries = entries.Where(r => !lockedDates.Contains(Str(r["date"]))).ToList();
+
             var byDayRaw = new Dictionary<string, Dictionary<string, object>>();
             foreach (var r in entries) byDayRaw[Str(r["date"])] = r;
 
@@ -332,15 +391,29 @@ CREATE TABLE IF NOT EXISTS vault_qa(
                 });
             }
 
-            // 心情分布
+            // 心情分布（排除加锁日，否则能反推出那天有心情记录）
             var moodDist = new int[6];
-            foreach (var v in Rows(@"SELECT v.val FROM vals v JOIN modules m ON m.id=v.module_id
+            foreach (var v in Rows(@"SELECT v.val, v.date FROM vals v JOIN modules m ON m.id=v.module_id
                                      WHERE m.type='mood' AND v.date>=$f AND v.date<=$t", ("$f", from), ("$t", to)))
+            {
+                if (lockedDates.Contains(Str(v["date"]))) continue;
                 if (int.TryParse(Str(v["val"]).Trim('"'), out var mv) && mv >= 1 && mv <= 5) moodDist[mv]++;
+            }
 
-            var tagsTop = Rows(@"SELECT tag, COUNT(*) n FROM entry_tags WHERE date>=$f AND date<=$t
-                                 GROUP BY tag ORDER BY n DESC, tag LIMIT 12", ("$f", from), ("$t", to))
-                .Select(r => new { tag = Str(r["tag"]), n = Int(r["n"]) }).ToList();
+            /*
+             * 注意：这里改了写法（先取原始行、在内存里按日期剔除锁定的那些、
+             * 再分组计数），**必须把 $f / $t 两个参数传进去** ——
+             * SQL 里写着 date>=$f AND date<=$t，漏了参数 SqliteCommand 会直接抛
+             * 「Must add values for the following parameters」，
+             * 整块区间总结就打不开了。这是回归时实测抓到的。
+             */
+            var tagsTop = Rows(@"SELECT tag, date FROM entry_tags WHERE date>=$f AND date<=$t",
+                    ("$f", from), ("$t", to))
+                .Where(r => !lockedDates.Contains(Str(r["date"])))
+                .GroupBy(r => Str(r["tag"]))
+                .Select(g => new { tag = g.Key, n = g.Count() })
+                .OrderByDescending(x => x.n).ThenBy(x => x.tag)
+                .Take(12).ToList();
 
             var habitsTop = Rows(@"SELECT h.name nm, COUNT(*) n FROM habit_logs l
                                    JOIN habits h ON h.id=l.habit_id
@@ -356,9 +429,11 @@ CREATE TABLE IF NOT EXISTS vault_qa(
                                         AND substr(done_at,1,10)>=$f AND substr(done_at,1,10)<=$t",
                                         ("$f", from), ("$t", to)));
             var images = 0;
-            foreach (var v in Rows(@"SELECT v.val FROM vals v JOIN modules m ON m.id=v.module_id
+            foreach (var v in Rows(@"SELECT v.val, v.date FROM vals v JOIN modules m ON m.id=v.module_id
                                      WHERE m.type='images' AND v.date>=$f AND v.date<=$t", ("$f", from), ("$t", to)))
             {
+                // #244 衍生：锁定日的图片也不该算进区间统计
+                if (lockedDates.Contains(Str(v["date"]))) continue;
                 try
                 {
                     using var doc = JsonDocument.Parse(Str(v["val"]));
@@ -547,17 +622,13 @@ CREATE TABLE IF NOT EXISTS vault_qa(
         {
             var i = (dataUrl ?? "").IndexOf("base64,", StringComparison.OrdinalIgnoreCase);
             if (i < 0) return new { ok = false, err = "没有图片数据" };
-            var bytes = Convert.FromBase64String(dataUrl.Substring(i + 7));
-            using var ms = new MemoryStream(bytes);
-            using var img = System.Drawing.Image.FromStream(ms);
-            System.Windows.Forms.Clipboard.SetImage(new System.Drawing.Bitmap(img));
-            return new { ok = true };
+            // 剪贴板是 Windows 专有的，走 Platform 那一层，别在数据层直接引用 WinForms
+            return Platform.CopyImage(dataUrl);
         }
 
         public object ShareCopyText(string text)
         {
-            if (!string.IsNullOrEmpty(text)) System.Windows.Forms.Clipboard.SetText(text);
-            return new { ok = true };
+            return Platform.CopyText(text);
         }
 
         /// <summary>分享页：一个可以发给别人、双击就能看的静态 HTML。</summary>

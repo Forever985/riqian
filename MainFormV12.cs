@@ -10,34 +10,7 @@ namespace Riqian
      */
     public partial class MainForm
     {
-        private object V12Dispatch(string m, JsonElement a)
-        {
-            /* 第 107 / 170 条：字体库。命名 space 沿用 "font."，和上面的 "draw." 平级 */
-            if (m != null && m.StartsWith("font."))
-            {
-                if (m == "font.list") return db.FontList();
-                if (m == "font.import") return FontImport();
-                if (m == "font.delete") return db.FontDelete(S(a, "file"));
-                if (m == "font.bytes") return db.FontBytes(S(a, "file"));
-                return null;
-            }
-
-            if (m == null || !m.StartsWith("draw.")) return null;
-
-            if (m == "draw.list") return db.DrawingList();
-            if (m == "draw.get") return db.DrawingGet(S(a, "id"));
-            if (m == "draw.save")
-                return db.DrawingSave(
-                    S(a, "id"), S(a, "title"), I(a, "w", 0), I(a, "h", 0),
-                    S(a, "strokes"), S(a, "thumb"), S(a, "note"));
-            if (m == "draw.delete") return db.DrawingDelete(S(a, "id"), I(a, "hard", 0));
-            if (m == "draw.trash") return db.DrawingTrash();
-            if (m == "draw.restore") return db.DrawingRestore(S(a, "id"));
-            if (m == "draw.rename") return db.DrawingRename(S(a, "id"), S(a, "title"));
-            if (m == "draw.toMedia") return db.DrawingToMedia(S(a, "id"), S(a, "data"), S(a, "name"));
-
-            return null;
-        }
+        /* V12Dispatch 已搬到 RpcDispatcher.cs（桌面与安卓共用同一份实现），见该文件。 */
 
         /// <summary>
         /// 第 170 条：弹文件框导入字体。

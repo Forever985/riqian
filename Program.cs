@@ -23,6 +23,16 @@ namespace Riqian
         static void Main()
         {
             /*
+             * 平台实现要在**任何 Db 操作之前**注册。
+             *
+             * 缩略图和剪贴板这两件事原来直接写在 Db*.cs 里用 GDI+，
+             * 现在收到 Platform 那一层（见 Platform.cs 顶部注释）。
+             * 注册晚了不会报错，只会静默地"缩略图是空的"—— 那种问题
+             * 要到用户导入几十张图之后才会被发现，而且看不出原因。
+             */
+            PlatformWindows.Register();
+
+            /*
              * `--selfcheck`：不开窗口，只验"全新装机的库能不能建对"。
              *
              * 必须放在**单实例互斥量之前**：CI 上可能同时有别的步骤在跑，
@@ -46,7 +56,23 @@ namespace Riqian
             Diag.Start();
             HookGlobalExceptions();
 
+            /*
+             * `--test-toast`：提醒窗注销自检。
+             *
+             * 放在单实例互斥量之前 —— 它自己开临时窗体，跟用户数据无关，
+             * 不该因为「用户已经开着一个日签」就拒绝跑。
+             * 见 ToastSelfTest.cs 顶部：为什么这个必须做成自检、
+             * 而不是「连发两个提醒试试看」。
+             */
+            if (Environment.GetCommandLineArgs()
+                .Any(a => string.Equals(a, "--test-toast", StringComparison.OrdinalIgnoreCase)))
+            {
+                Environment.ExitCode = ToastSelfTest.Run();
+                return;
+            }
+
             const string mutexName = @"Local\RiqianJournal.SingleInstance";
+            Diag.Info("boot", "启动路径：检查单实例");
             using var mutex = new Mutex(true, mutexName, out var isFirst);
             if (!isFirst)
             {
@@ -73,7 +99,23 @@ namespace Riqian
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-                Application.Run(new MainForm());
+
+                /*
+                 * 这几行 boot 埋点是给「双击了没反应」这类问题留的证据。
+                 *
+                 * 起因：2026-11-11 有一次启动后既没有窗口、也没有日志、端口也不通，
+                 * 日志停在上一条就没了 —— 光看日志分不清是卡在「构造窗体」
+                 * 还是卡在「消息循环」还是卡在 WebView2 初始化。
+                 * 有了这三行，下次一眼就能定位到哪一段。
+                 *
+                 * 注意 WebView2 的初始化在 InitAsync 里（Load 之后），
+                 * 所以「主窗口构造完成」之后如果迟迟没有下面的会话结束，
+                 * 问题就在 WebView2 那一段。
+                 */
+                Diag.Info("boot", "开始构造主窗口");
+                var form = new MainForm();
+                Diag.Info("boot", "主窗口构造完成，进入消息循环");
+                Application.Run(form);
             }
             catch (Exception ex)
             {

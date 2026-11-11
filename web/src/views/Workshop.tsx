@@ -44,7 +44,8 @@ const WORKS: { k: string; n: string; d: string; ok: boolean }[] = [
   },
 ];
 
-export function WorkshopView() {
+/** #245：`embedded` = 被「扩展」页内嵌，不自己渲染顶栏，见 ThemeCenter 开头的说明 */
+export function WorkshopView({ embedded = false }: { embedded?: boolean } = {}) {
   const settings = useStore((s) => s.settings) as Record<string, unknown>;
   const toast = useStore((s) => s.toast);
 
@@ -59,22 +60,28 @@ export function WorkshopView() {
 
   const nameOf = (k: string) => WORKS.find((w) => w.k === k)?.n || k;
 
+  const actions = (
+    <>
+      <button className="btn" onClick={() => setMaking(true)} data-act="workshop-make">
+        <Icon name="share" /> 打包我的内容
+      </button>
+      <button className="btn primary" onClick={() => setInstalling(true)} data-act="workshop-install-open">
+        <Icon name="plus" /> 安装作品
+      </button>
+    </>
+  );
+
   return (
-    <div className="page">
-      <Topbar
-        title="创意工坊"
-        sub={`${works.length} 件作品已装`}
-        right={
-          <>
-            <button className="btn" onClick={() => setMaking(true)} data-act="workshop-make">
-              <Icon name="share" /> 打包我的内容
-            </button>
-            <button className="btn primary" onClick={() => setInstalling(true)} data-act="workshop-install-open">
-              <Icon name="plus" /> 安装作品
-            </button>
-          </>
-        }
-      />
+    <div className={embedded ? '' : 'page'}>
+      {embedded ? (
+        <div className="row" style={{ marginBottom: 12 }}>{actions}</div>
+      ) : (
+        <Topbar
+          title="创意工坊"
+          sub={`${works.length} 件作品已装`}
+          right={actions}
+        />
+      )}
 
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.7 }}>
         创意工坊装的是<b>内容</b>：模板、倒计时、标签。别人把整理好的东西打成一个

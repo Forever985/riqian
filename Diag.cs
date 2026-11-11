@@ -62,9 +62,18 @@ namespace Riqian
         {
             try
             {
-                Dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Riqian", "logs");
+                /*
+                 * 目录优先 LocalApplicationData（桌面：%LOCALAPPDATA%\Riqian\logs）。
+                 *
+                 * 安卓上这个 API 会返回空串或不可写路径 —— 直接 Path.Combine 会抛，
+                 * 结果是「手机上完全没有日志」。手机出问题最难查，恰恰最需要日志，
+                 * 所以这里回退到数据目录（rootHint）下的 logs。
+                 */
+                var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (string.IsNullOrWhiteSpace(baseDir) || !CanWrite(baseDir))
+                    baseDir = !string.IsNullOrWhiteSpace(rootHint) ? rootHint : Path.GetTempPath();
+
+                Dir = Path.Combine(baseDir, "Riqian", "logs");
                 Directory.CreateDirectory(Dir);
                 RotateTo(DateTime.Now);
 
@@ -81,6 +90,30 @@ namespace Riqian
                 // 连日志都起不来，只能放弃（但别让启动因此失败）
                 _ready = false;
             }
+        }
+
+        /// <summary>
+        /// 能不能往这个目录写。安卓上 GetFolderPath 常返回拿不到的路径，光判空不够。
+        ///
+        /// 判据是「写得进去」，**不是「删得掉」**。
+        /// 2026-11-11 踩到了：写探针文件成功、删它被安全策略拦下，
+        /// 于是这个函数返回 false，日志被错误地落到 %TEMP% ——
+        /// 用户找不到日志，而目录其实是好的。
+        /// 删除只是清理，失败不该影响结论。
+        /// </summary>
+        private static bool CanWrite(string dir)
+        {
+            string probe = null;
+            try
+            {
+                Directory.CreateDirectory(dir);
+                probe = Path.Combine(dir, ".w_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                File.WriteAllText(probe, "1");
+            }
+            catch { return false; }
+
+            try { if (probe != null) File.Delete(probe); } catch { /* 删不掉无所谓，能写就行 */ }
+            return true;
         }
 
         /// <summary>进程退出时把队列里剩下的写完</summary>

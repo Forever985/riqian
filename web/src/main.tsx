@@ -1,3 +1,5 @@
+// 必须第一个：补丁要早于任何用到被补 API 的模块求值
+import './polyfills';
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';

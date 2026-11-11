@@ -126,6 +126,30 @@ export function RecordsView() {
   const menuFor = (it: EntryListItem): MenuItem[] => {
     /* 标签是按日期懒加载的：右键时才去取，不在列表里铺 300 条请求 */
     const tagsNow = tagsOf[it.date] || it.tags || [];
+    /*
+     * #244 衍生：加了密码的那天，右键菜单只留「打开（去解锁）」和「复制日期」。
+     *
+     * 其余几项在锁定状态下都不该给：
+     *   · 复制正文 / 复制整条 —— 正文本来就是空的，给了也是空操作，但会让人以为「内容没了」
+     *   · 清掉标签 —— tagsNow 是空的（后端已清空），点了会真的把库里的标签删掉，
+     *     这是**绕过密码造成的实质数据损失**
+     *   · 删除这一天 —— 更要紧：没解锁就能删掉一篇有内容且被保护的日记
+     */
+    if (it.locked) {
+      return [
+        { label: '打开这一天', hint: '需要密码', onClick: () => void setDate(it.date) },
+        { sep: true },
+        { label: '复制日期', hint: it.date, onClick: () => copy(it.date, '日期') },
+        {
+          label: it.fav ? '取消收藏' : '收藏这一天', hint: '★',
+          onClick: async () => {
+            const nv = it.fav ? 0 : 1;
+            await api.entry.fav(it.date, nv);
+            setItems((prev) => prev.map((x) => (x.date === it.date ? { ...x, fav: nv } : x)));
+          },
+        },
+      ];
+    }
     return [
       { label: '打开这一天', hint: '进「今天」写', onClick: () => void setDate(it.date) },
       { label: it.fav ? '取消收藏' : '收藏这一天', hint: '★',
@@ -228,23 +252,41 @@ export function RecordsView() {
             : items).map((it) => {
             const d = parseKey(it.date);
             const mv = moodMod ? Number(it.values[moodMod.id]) : 0;
+            /*
+             * #244 衍生：这一天加了密码，后端已经不返回标题/正文/标签了。
+             * 不处理的话这一行看起来是「一条 0 字的空记录」，
+             * 用户很可能以为是垃圾数据，顺手就删了 —— 而那其实是有内容的日记。
+             */
+            const locked = !!it.locked;
             return (
               <div
-                className="rec"
+                className={`rec ${locked ? 'locked' : ''}`}
                 key={it.date}
                 onContextMenu={(e) => ctx.open(e, menuFor(it))}
               >
                 <div className="hd">
                   <span className="dt">{it.date}</span>
                   <span className="dt muted">星期{WD[d.getDay()]}</span>
-                  {mv ? <span>{MOODS.find((x) => x.v === mv)?.e}</span> : null}
-                  {(it.tags || []).map((t) => <span className="tag" key={t}>{t}</span>)}
+                  {locked ? <span className="tag">🔒 已加锁</span> : (
+                    <>
+                      {mv ? <span>{MOODS.find((x) => x.v === mv)?.e}</span> : null}
+                      {(it.tags || []).map((t) => <span className="tag" key={t}>{t}</span>)}
+                    </>
+                  )}
                   {it.fav ? <span style={{ color: 'var(--accent)' }}>★</span> : null}
-                  {it.status === 'draft' ? <span className="chip">草稿</span> : null}
-                  <button className="go" onClick={() => void setDate(it.date)}>打开</button>
+                  {!locked && it.status === 'draft' ? <span className="chip">草稿</span> : null}
+                  <button className="go" onClick={() => void setDate(it.date)}>
+                    {locked ? '去解锁' : '打开'}
+                  </button>
                 </div>
-                {it.title ? <div className="rec-title" dangerouslySetInnerHTML={{ __html: highlight(it.title, q) }} /> : null}
-                <div className="tx" dangerouslySetInnerHTML={{ __html: highlight(it.plain, q) }} />
+                {locked ? (
+                  <div className="tx muted">这一天的日记设了密码，内容不在列表里显示。</div>
+                ) : (
+                  <>
+                    {it.title ? <div className="rec-title" dangerouslySetInnerHTML={{ __html: highlight(it.title, q) }} /> : null}
+                    <div className="tx" dangerouslySetInnerHTML={{ __html: highlight(it.plain, q) }} />
+                  </>
+                )}
               </div>
             );
           }) : <div className="empty">没有符合条件的记录。</div>}

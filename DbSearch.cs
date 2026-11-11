@@ -66,6 +66,14 @@ namespace Riqian
                       ORDER BY date DESC LIMIT $n", ("$q", like), ("$n", per)))
                 {
                     var d = Str(r["date"]);
+                    /*
+                     * #244：锁住的日记不进搜索结果。
+                     *
+                     * 这里不是「显示成打码」而是**整条跳过** —— 搜索摘要会截取命中词
+                     * 前后几十个字，只要给出摘要就等于把私密内容泄露了。
+                     * 而且命中本身就是信息：搜「旅行」能搜到某一天，说明那天提过旅行。
+                     */
+                    if (IsDiaryLocked(d)) continue;
                     var t = Str(r["title"]);
                     Add("entry", d, t.Length > 0 ? t : d, d, Snippet(Str(r["plain"]), q), d);
                 }

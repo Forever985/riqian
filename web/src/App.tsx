@@ -33,9 +33,13 @@ import { LedgerView } from './views/Ledger';
 import { AlarmsView } from './views/Alarms';
 import { MilestonesView } from './views/Milestones';
 import { DrawView } from './views/Draw';
+/* #250：愿望单 */
+import { WishView } from './views/Wish';
 import { ThemeCenterView } from './views/ThemeCenter';
 import { PluginCenterView } from './views/PluginCenter';
 import { WorkshopView } from './views/Workshop';
+/* #245：三者合并后的聚合页 */
+import { ExtensionsView } from './views/Extensions';
 import { CommandPalette, QuickPanel, ShortcutHelp } from './features/quick';
 import { applyAppearance } from './lib/theme';
 import { importImageFiles, imageFilesFromDataTransfer } from './lib/upload';
@@ -380,6 +384,8 @@ export default function App() {
       case 'alarms': return <AlarmsView />;
       case 'timeline': return <Guarded scope="timeline" label="时间轴"><MilestonesView /></Guarded>;
       case 'draw': return <Guarded scope="draw" label="画板"><DrawView /></Guarded>;
+      /* #250：愿望单。不加 <Guarded> —— 它和待办同级，待办没锁它也不该锁 */
+      case 'wish': return <WishView />;
       case 'profile': return <ProfileView />;
       case 'stats': return <Guarded scope="stats" label="统计（能推断出你写了多少）"><StatsView /></Guarded>;
       /*
@@ -390,10 +396,27 @@ export default function App() {
       case 'themeCenter': return <ThemeCenterView />;
       case 'pluginCenter': return <PluginCenterView />;
       case 'workshop': return <WorkshopView />;
-      /* 第 55 条：缓存独立入口。里面全是本地文件统计，没有隐私内容，不加锁 */
+      /* #245：合并后的「扩展」页，内部用选项卡切这三块 */
+      case 'extensions': return <ExtensionsView />;
+      /* #246：缓存视图保留，入口从导航移到了「设置 → 数据与缓存」 */
       case 'cache': return <CacheCenterView />;
       case 'settings': return <SettingsView />;
-      case 'today': return <Guarded scope="diary" target={date} label="这一天的日记"><TodayView /></Guarded>;
+      /*
+       * #244 衍生：解锁成功后必须重新拉这一天的数据。
+       *
+       * 数据层在锁着的时候返回的是空内容（entry.get 也堵了），
+       * 不解锁后重拉的话，草稿是空的，用户一打字就把真实内容覆盖了。
+       */
+      case 'today': return (
+        <Guarded
+          scope="diary"
+          target={date}
+          label="这一天的日记"
+          onUnlocked={() => { void useStore.getState().reloadEntry(); }}
+        >
+          <TodayView />
+        </Guarded>
+      );
       default: return <TodayView />;
     }
   })();

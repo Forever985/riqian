@@ -18,7 +18,8 @@ import { PLUGIN_MODULE_TYPES, type PluginPack } from '../lib/pack';
 import { TYPE_NAME } from '../lib/const';
 import { InstallDialog, InstalledList, MakePackDialog } from '../features/PackUI';
 
-export function PluginCenterView() {
+/** #245：`embedded` = 被「扩展」页内嵌，不自己渲染顶栏，见 ThemeCenter 开头的说明 */
+export function PluginCenterView({ embedded = false }: { embedded?: boolean } = {}) {
   const settings = useStore((s) => s.settings) as Record<string, unknown>;
   const modules = useStore((s) => s.modules);
   const toast = useStore((s) => s.toast);
@@ -38,22 +39,28 @@ export function PluginCenterView() {
     return p.moduleIds.filter((id) => ids.has(id)).length;
   };
 
+  const actions = (
+    <>
+      <button className="btn" onClick={() => setMaking(true)} data-act="plugin-make">
+        <Icon name="share" /> 打包我的配置
+      </button>
+      <button className="btn primary" onClick={() => setInstalling(true)} data-act="plugin-install-open">
+        <Icon name="plus" /> 安装插件
+      </button>
+    </>
+  );
+
   return (
-    <div className="page">
-      <Topbar
-        title="插件中心"
-        sub={`${plugins.length} 个插件 · 当前共 ${(modules || []).length} 个模块`}
-        right={
-          <>
-            <button className="btn" onClick={() => setMaking(true)} data-act="plugin-make">
-              <Icon name="share" /> 打包我的配置
-            </button>
-            <button className="btn primary" onClick={() => setInstalling(true)} data-act="plugin-install-open">
-              <Icon name="plus" /> 安装插件
-            </button>
-          </>
-        }
-      />
+    <div className={embedded ? '' : 'page'}>
+      {embedded ? (
+        <div className="row" style={{ marginBottom: 12 }}>{actions}</div>
+      ) : (
+        <Topbar
+          title="插件中心"
+          sub={`${plugins.length} 个插件 · 当前共 ${(modules || []).length} 个模块`}
+          right={actions}
+        />
+      )}
 
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.7 }}>
         插件会在你的日记里<b>新增模块</b>（比如「今日三件好事」「喝水记录」），

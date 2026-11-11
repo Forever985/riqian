@@ -80,13 +80,122 @@ namespace Riqian
             Load += async (s, e) => await InitAsync();
             FormClosing += OnClosing;
             StartV10();
+
+            /*
+             * 注册壳实现。
+             *
+             * 必须在任何 RPC 到达之前装好。放在构造函数里而不是 InitAsync 里，
+             * 是因为 InitAsync 是 Load 之后才跑的 —— 那之间存在一个窗口期，
+             * 页面可能已经加载完了、JS 已经在发 bootstrap。虽然实际不会这么快，
+             * 但"依赖时序才不崩"的设计迟早会崩。构造函数是确定的最早点。
+             */
+            Shell.Current = new ShellWindows(this);
+
+            /*
+             * 把桌面独有的两件事注进共享分发层。
+             *
+             * RpcDispatcher 里 280 个方法只有这两个真的碰窗体：
+             *   · hotkey.apply  → 注册全局热键（手机上没有这个概念）
+             *   · app.chrome    → 把配色刷到窗体/托盘（手机上网页自己管）
+             * 安卓那边不注册这两个委托，调用时得到「本平台没有全局热键」这种
+             * 能看懂的结果，而不是 NullReferenceException。
+             */
+            RpcDispatcher.HotkeyApply = () => ApplyHotkeys();
+            RpcDispatcher.UiChrome = (panel, ink, line, accent, dark) =>
+                SetUiChrome(panel, ink, line, accent, dark);
+
+            /*
+             * 剩下这些是「桌面手段确实不同」的动作，交给 Host。
+             * 安卓那边一个都不注册 —— Host 里已经写好了降级（返回 ok:false + 人话），
+             * 不会让手机上的调用崩掉。
+             */
+            Host.ChangeRootFn = () => ChangeRoot();
+            Host.ExportNoteFn = (id) => ExportNote(id);
+            Host.FontImportFn = () => FontImport();
+            Host.MusicImportFn = () => MusicImport();
+            Host.NotifyPushFn = (a) => NotifyPush(a);
+            Host.OpenExternalFn = (url) => OpenExternal(url);
+            Host.AutostartSetFn = (on) => AutostartSet(on);
+            Host.AutostartGetFn = () => AutostartGet();
+            Host.ScreenInfoFn = () => ScreenInfo();
+            Host.ShowToastFn = (t, b, k, s, top) => ShowToast(t, b, k, s, top);
+            Host.InitTrayFn = () => InitTray();
+            Host.SetTrayLockedFn = (on) => SetTrayLocked(on);
+            Host.ApplyShellFn = () => ApplyShell();
+            Host.ApplyOrbFn = (on) => ApplyOrb(on);
+            Host.ToggleBossFn = (here) => ToggleBoss(here);
+            Host.QuickStateFn = () => QuickState();
+
+            /* 状态读取：给的是取值函数，不是快照 —— 否则托盘刚点过锁，分发层还报旧值 */
+            Host.TrayLockedFn = () => _trayLocked;
+            Host.BossOnFn = () => _bossOn;
+            Host.OrbVisibleFn = () => _orb != null && !_orb.IsDisposed && _orb.Visible;
+            Host.HotkeyCountFn = () => _hotkeyOn.Count;
+
+            Host.DebugApiInfoFn = () =>
+            {
+                var text = "";
+                try { if (File.Exists(DebugApi.InfoFile)) text = File.ReadAllText(DebugApi.InfoFile); }
+                catch (Exception ex) { Diag.Warn("diag", "读 debug-api.json 失败", ex); }
+                return new { ok = true, path = DebugApi.InfoFile, text };
+            };
+
+            Host.StickyOpenFn = (id) => StickyOpen(id);
+            Host.StickyCloseFn = (id) => StickyClose(id);
+            Host.StickyListFn = () => StickyList();
+
+            /*
+             * 调试网关（供外部 AI / 自动化调 RPC）。
+             * 逻辑原样搬过来 —— 它要传 this 和 Dispatch，所以只能挂在桌面侧。
+             */
+            Host.DebugApiApplyFn = (want, port) =>
+            {
+                if (want == "1")
+                {
+                    var err = DebugApi.Start(port, this, Dispatch);
+                    if (err != null) return new { ok = false, err };
+                    db.SettingSet("debugApi", "1");   // 记住，下次启动自动开
+                }
+                else if (want == "0")
+                {
+                    DebugApi.Stop();
+                    db.SettingSet("debugApi", "0");
+                }
+                if (!string.IsNullOrEmpty(want))
+                    Diag.Info("diag", "调试网关 " + (want == "1" ? "开启" : "关闭") + " ← 设置页");
+
+                return new
+                {
+                    ok = true,
+                    running = DebugApi.IsRunning,
+                    port = DebugApi.Port,
+                    token = DebugApi.TokenForShow,
+                    info = DebugApi.InfoFile,
+                    url = DebugApi.IsRunning ? "http://127.0.0.1:" + DebugApi.Port + "/" : ""
+                };
+            };
         }
+
+        /// <summary>
+        /// 「打算用哪个数据目录」。在 new Db 之前就赋好，
+        /// 这样即使开库失败、db 为 null，报错信息里也能把路径说清楚。
+        /// </summary>
+        private string _rootHint;
 
         private async Task InitAsync()
         {
             try
             {
-                db = new Db(ResolveRoot());
+                /*
+                 * 先把「打算用哪个目录」记下来，再去开库。
+                 *
+                 * 必须这样：`new Db(root)` 一旦抛异常，db 字段就永远是 null，
+                 * 后面报错里再写 `db?.Root` 就是空的 —— 而用户最需要知道的
+                 * 恰恰是「到底哪个目录打不开」。2026-11-11 的弹窗就是这样：
+                 * 「数据目录：」后面一片空白，等于什么都没说。
+                 */
+                _rootHint = ResolveRoot();
+                db = new Db(_rootHint);
 
                 var userData = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -150,6 +259,17 @@ namespace Riqian
                 // 启动失败是最致命的一类：用户看到的就是「打不开」，什么线索都没有。
                 // 日志 + 一份独立的 boot-error.log（老路径保留，方便直接发给我）+ 带路径的弹窗。
                 Diag.Fatal("boot", "启动失败", ex);
+
+                /*
+                 * 先停掉所有定时器，再弹窗。
+                 *
+                 * 顺序很要紧：MessageBox 是模态的，用户不点它，后面的 Close() 就不执行。
+                 * 而 30 秒一次的报警定时器在这期间照跑 —— db 是 null，每跳一次抛一个
+                 * NRE，把日志刷满。2026-11-11 就是这样：一条真正的「打不开数据库」
+                 * 被六条 NRE 淹掉，看不出主次。
+                 */
+                try { _alarmTimer?.Stop(); _alarmTimer?.Dispose(); _alarmTimer = null; } catch { }
+
                 try
                 {
                     File.WriteAllText(
@@ -164,8 +284,44 @@ namespace Riqian
                 var more = "";
                 while (inner != null) { more += "\n\n" + inner.Message; inner = inner.InnerException; }
 
+                /*
+                 * 把「数据库打不开」这类最常见的原因翻译成人话，并给出能自己试的动作。
+                 *
+                 * 原始错误是 `SQLite Error 8: attempt to write a readonly database`——
+                 * 用户看到这句只会以为"文件坏了"，而实际最常见的原因是
+                 * 磁盘当时没就绪（休眠盘刚唤醒）或被别的程序占着。
+                 * 这两种都是"等一下再开就好了"，值得明说。
+                 */
+                var hint = "";
+                var msg = ex.Message ?? "";
+                if (msg.IndexOf("readonly", StringComparison.OrdinalIgnoreCase) >= 0)
+                    hint = "\n\n数据目录写不进去。常见原因：\n"
+                         + "  · 数据所在的盘当时没就绪（休眠盘刚唤醒、移动硬盘刚插上）\n"
+                         + "  · 杀毒软件正在扫描这个文件\n"
+                         + "  · 目录权限被改动\n"
+                         + "先直接重开一次；还不行就看下面的目录里能不能手动新建文件。";
+                else if (msg.IndexOf("locked", StringComparison.OrdinalIgnoreCase) >= 0
+                      || msg.IndexOf("busy", StringComparison.OrdinalIgnoreCase) >= 0)
+                    hint = "\n\n数据库正被另一个程序占用。\n"
+                         + "检查是不是还有一个日签在后台（托盘里），把它退掉再开。";
+
+                /*
+                 * 路径要尽力显示出来。db 可能是 null（开库失败），
+                 * _rootHint 也可能没取到（连目录都解析不出来）。
+                 * 三种情况分别给出能看的内容，绝不留一片空白 ——
+                 * 用户看到「数据目录：」后面什么都没有，比不说更让人抓狂。
+                 */
+                var rootShown = !string.IsNullOrEmpty(db?.Root)
+                    ? db.Root
+                    : (!string.IsNullOrEmpty(_rootHint) ? _rootHint : "(取不到，可能连配置都读不出来)");
+
+                /* 把弹窗里说的路径也写进日志：用户发日志过来时，
+                   不用再问一句「你的数据目录在哪」。 */
+                Diag.Info("boot", "启动失败提示：数据目录=" + rootShown + " · 日志目录=" + Diag.Dir);
+
                 MessageBox.Show(this,
-                    "启动失败。\n\n" + ex.Message + more +
+                    "启动失败。\n\n" + ex.Message + more + hint +
+                    "\n\n数据目录：\n" + rootShown +
                     "\n\n诊断日志：\n" + Diag.Dir,
                     "日签", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
@@ -312,11 +468,8 @@ namespace Riqian
         /// 别在每个调用点各写一遍 TrimStart。设置导入就是因为只在导出侧管了 BOM、
         /// 导入侧没管，"导出再导入"这条路断了很久没人发现。
         /// </summary>
-        internal static string StripJsonPreamble(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text ?? "";
-            return text.TrimStart('\uFEFF', '\u200B', '\u00A0', ' ', '\t', '\r', '\n');
-        }
+        /// <summary>已搬到 TextUtil.cs（两端共用）。这里保留一层壳，老的调用点不用改。</summary>
+        internal static string StripJsonPreamble(string text) => TextUtil.StripJsonPreamble(text);
 
         private static JsonElement? JsonSafe(string text)
         {
@@ -421,7 +574,8 @@ namespace Riqian
             "user.get", "user.save", "vault.add", "vault.check",
             "vault.clearMain", "vault.hint", "vault.lock", "vault.qa.list",
             "vault.qa.reset", "vault.qa.save", "vault.qa.verify", "vault.remove",
-            "vault.setMain", "vault.status", "vault.unlock",
+            "vault.setMain", "vault.status", "vault.unlock", "wish.delete",
+            "wish.done", "wish.list", "wish.save", "wish.stats",
             /* @@RPC_LIST_END@@ */
             };
 
@@ -514,225 +668,36 @@ namespace Riqian
             try { web.CoreWebView2?.PostWebMessageAsJson(payload); } catch { }
         }
 
-        private static string S(JsonElement a, string k, string def = null)
-        {
-            if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(k, out var v)) return def;
-            return v.ValueKind == JsonValueKind.String ? v.GetString() : v.ValueKind == JsonValueKind.Null ? def : v.ToString();
-        }
+        /* 参数读取一律转发到 RpcArgs（共用文件）。
+         *
+         * 为什么不把这 99 处调用点改成 RpcArgs.S(...)：
+         * 改动面太大、收益为零，而这种纯机械替换最容易在某一处手滑改错，
+         * 且错了编译器也未必报（比如把 S 换成 SN 语义就变了，两者都返回 string）。
+         *
+         * 留一层同名同签名的转发，分发代码一个字都不用动，
+         * 同时安卓那边也能拿到同一份实现 —— 两边行为由同一个文件保证。 */
+        private static string S(JsonElement a, string k, string def = null) => RpcArgs.S(a, k, def);
 
-        private static int I(JsonElement a, string k, int def = -1)
-        {
-            if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(k, out var v)) return def;
-            if (v.ValueKind == JsonValueKind.Number) return v.GetInt32();
-            if (v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out var n)) return n;
-            return def;
-        }
+        private static int I(JsonElement a, string k, int def = -1) => RpcArgs.I(a, k, def);
 
-        private static double D(JsonElement a, string k, double def = 0)
-        {
-            if (a.ValueKind == JsonValueKind.Object && a.TryGetProperty(k, out var v))
-            {
-                if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)) return d;
-                if (v.ValueKind == JsonValueKind.String && double.TryParse(v.GetString(), out var d2)) return d2;
-            }
-            return def;
-        }
+        /// <summary>取长整数。金额（分）这类量用它 —— int 装不下「一亿元」这种上限。</summary>
+        private static long L(JsonElement a, string k, long def = -1) => RpcArgs.L(a, k, def);
 
-        private static string[] Arr(JsonElement a, string k)
-        {
-            if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(k, out var v) || v.ValueKind != JsonValueKind.Array)
-                return new string[0];
-            return v.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x != "").ToArray();
-        }
+        private static double D(JsonElement a, string k, double def = 0) => RpcArgs.D(a, k, def);
 
-        private object Dispatch(string m, JsonElement a)
-        {
-            // v12 新增能力（画板，第 178 条）先过一遍
-            var v12 = V12Dispatch(m, a);
-            if (v12 != null) return v12;
+        private static string[] Arr(JsonElement a, string k) => RpcArgs.Arr(a, k);
 
-            // v10 新增能力（打卡回收站 / 笔记分组 / 媒体分类 / 记账 / 提醒 / 打气话 / 诊断）
-            var v10 = V10Dispatch(m, a);
-            if (v10 != null) return v10;
-
-            // v9 新增能力（定稿 / 草稿箱 / 放弃 / 番茄洞察 / 反馈）
-            var v9 = V9Dispatch(m, a);
-            if (v9 != null) return v9;
-
-            // v8 新增能力（热键 / 托盘 / 分享 / 总结 / 密保）先过一遍
-            var v8 = V8Dispatch(m, a);
-            if (v8 != null) return v8;
-
-            // v7 新增能力先走一遍，返回 null 说明不归它管
-            var v7 = V7Dispatch(m, a);
-            if (v7 != null) return v7;
-
-            switch (m)
-            {
-                /* 基础 */
-                case "bootstrap": return new
-                {
-                    root = db.Root,
-                    dbPath = db.DbPath,
-                    mediaDir = db.MediaDir,
-                    exportDir = db.ExportDir,
-                    settings = db.SettingsAll(),
-                    modules = db.Modules(),
-                    tags = db.Tags(),
-                    habits = db.Habits(),
-                    today = Db.Today
-                };
-                case "setting.set": return db.SettingSet(S(a, "k"), S(a, "v"));
-
-                /* 模块 */
-                case "modules.list": return db.Modules();
-                case "modules.add": return db.ModuleAdd(S(a, "type"), S(a, "title"));
-                case "modules.update": return db.ModuleUpdate(S(a, "id"), S(a, "title"), I(a, "enabled", -1), a.TryGetProperty("config", out var cf) ? cf.GetRawText() : null);
-                case "modules.delete": return db.ModuleDelete(S(a, "id"));
-                case "modules.reorder": return db.ModuleReorder(Arr(a, "ids"));
-
-                /* 日记 */
-                case "entry.get": return db.EntryGet(S(a, "date"));
-                case "entry.save": return db.EntrySave(S(a, "date"),
-                                        a.TryGetProperty("values", out var vv) ? vv : default, I(a, "fav", 0), S(a, "bg", ""),
-                                        a.TryGetProperty("title", out var tt) && tt.ValueKind != JsonValueKind.Null ? (tt.GetString() ?? "") : null,
-                                        a.TryGetProperty("bgTone", out var bt2) && bt2.ValueKind != JsonValueKind.Null ? (bt2.GetString() ?? "") : null);
-                case "entry.list": return db.EntryList(S(a, "q", ""), S(a, "from"), S(a, "to"),
-                                        I(a, "mood", 0), S(a, "tag"), I(a, "fav", 0), I(a, "hasImg", 0),
-                                        I(a, "limit", 200), I(a, "offset", 0));
-                case "entry.fav": return db.EntryFav(S(a, "date"), I(a, "fav", 0));
-                case "entry.bg": return db.EntryBg(S(a, "date"), S(a, "bg", ""),
-                                        a.TryGetProperty("tone", out var tn) && tn.ValueKind != JsonValueKind.Null ? (tn.GetString() ?? "") : null);
-                case "entry.delete": return db.EntryDelete(S(a, "date"));
-
-                /* 版本 */
-                case "rev.list": return db.Revisions(S(a, "date"));
-                case "rev.get": return db.RevisionGet(I(a, "id", 0));
-                case "rev.restore": return db.RevisionRestore(I(a, "id", 0));
-
-                /* 标签 */
-                case "tags.list": return db.Tags();
-                case "tag.set": return db.TagSet(S(a, "date"), Arr(a, "tags"));
-
-                /* 关联 */
-                case "link.add": return db.LinkAdd(S(a, "from"), S(a, "to"), S(a, "kind", "related"), S(a, "quote", ""));
-                case "link.addMany":
-                    {
-                        var from = S(a, "from");
-                        var kind = S(a, "kind", "related");
-                        foreach (var d in Arr(a, "dates")) db.LinkAdd(from, d, kind, "");
-                        return new { ok = true };
-                    }
-                case "link.delete": return db.LinkDelete(I(a, "id", 0));
-                case "backlinks": return db.Backlinks(S(a, "date"));
-
-                /* 待办 */
-                case "todos.list": return db.Todos(S(a, "sort"));
-                case "todos.reorder": return db.TodoReorder(Arr(a, "ids"));
-                case "todo.add": return db.TodoAdd2(S(a, "title"), S(a, "due", ""), S(a, "dueTime", ""),
-                                        I(a, "priority", 1), S(a, "note", ""), S(a, "listId"));
-                case "todo.update": return db.TodoUpdate2(S(a, "id"), S(a, "title"), I(a, "done", -1), S(a, "due"),
-                                        S(a, "dueTime"), I(a, "priority", -1), S(a, "note"),
-                                        S(a, "listId"), I(a, "trashed", -1), I(a, "sort", -1));
-                case "todo.trash": return db.TodoTrash(S(a, "id"), I(a, "trashed", 1));
-                case "todo.delete": return db.TodoDelete(S(a, "id"));
-                case "todo.clearDone": return db.TodoClearDone();
-
-                /* 清单 */
-                case "todo.lists": return db.TodoLists();
-                case "todo.list.add": return db.TodoListAdd(S(a, "name"), S(a, "color"));
-                case "todo.list.update": return db.TodoListUpdate(S(a, "id"), S(a, "name"), S(a, "color"), I(a, "sort", -1));
-                case "todo.list.delete": return db.TodoListDelete(S(a, "id"));
-
-                /* 倒计时 */
-                case "cd.list": return db.Countdowns();
-                case "cd.add": return db.CdAdd(S(a, "title"), S(a, "date"), I(a, "yearly", 0), S(a, "color"), S(a, "note"));
-                case "cd.update": return db.CdUpdate(S(a, "id"), S(a, "title"), S(a, "date"), I(a, "yearly", -1), S(a, "color"), S(a, "note"), I(a, "sort", -1), S(a, "repeat"), I(a, "star", -1));
-                case "cd.delete": return db.CdDelete(S(a, "id"));
-                case "cd.trash": return db.CdTrash();
-                case "cd.restore": return db.CdRestore(S(a, "id"));
-                case "cd.purge": return db.CdPurge(S(a, "id"));
-
-                /* 习惯 */
-                case "habits.list": return db.Habits();
-                case "habit.add": return db.HabitAdd(S(a, "name"), S(a, "color"), S(a, "type", "bool"),
-                                        S(a, "unit", ""), a.TryGetProperty("options", out var ho) ? ho.GetRawText() : "[]",
-                                        a.TryGetProperty("goal", out var hg) && hg.ValueKind == JsonValueKind.Number ? hg.GetDouble() : 0,
-                                        S(a, "icon", ""));
-                case "habit.update": return db.HabitUpdate(S(a, "id"), S(a, "name"), S(a, "color"), I(a, "archived", -1),
-                                        S(a, "type"), S(a, "unit"),
-                                        a.TryGetProperty("options", out var ho2) ? ho2.GetRawText() : null,
-                                        a.TryGetProperty("goal", out var hg2) && hg2.ValueKind == JsonValueKind.Number ? hg2.GetDouble() : -1,
-                                        S(a, "icon"));
-                case "habit.delete": return db.HabitDelete(S(a, "id"));
-                case "habit.log": return db.HabitLog(S(a, "date"), S(a, "habitId"),
-                                        a.ValueKind == JsonValueKind.Object && a.TryGetProperty("val", out var hv) && hv.ValueKind != JsonValueKind.Null
-                                            ? hv.GetRawText() : null,
-                                        a.ValueKind == JsonValueKind.Object && a.TryGetProperty("note", out var hn) && hn.ValueKind == JsonValueKind.String
-                                            ? hn.GetString() : null);
-                case "habit.notes": return db.HabitNotesFor(S(a, "date"));
-                case "habit.logs": return db.HabitLogsFor(S(a, "date"));
-                case "habit.history": return db.HabitHistory(S(a, "habitId"), I(a, "days", 30));
-                case "check.toggle": return db.CheckToggle(S(a, "date"), S(a, "habitId"));
-                case "checks.for": return db.ChecksFor(S(a, "date"));
-
-                /* 番茄钟 */
-                case "pomodoro.add": return db.PomodoroAdd(I(a, "minutes", 25), S(a, "kind", "focus"), S(a, "task", ""));
-                case "pomodoro.delete": return db.PomodoroDelete(S(a, "id"));
-                case "pomodoro.stats": return db.PomodoroStats(I(a, "days", 7), S(a, "from"), S(a, "to"));
-
-                /* 模板 */
-                case "templates.list": return db.Templates();
-                case "templates.save": return db.TemplateSave(S(a, "name"), S(a, "body", "[]"));
-                case "templates.delete": return db.TemplateDelete(S(a, "id"));
-                case "template.apply": return db.ApplyTemplate(S(a, "date"), S(a, "id"));
-
-                /* 图片 */
-                case "media.list": return db.MediaList(S(a, "q", ""), I(a, "limit", 500));
-                case "media.resolve": return db.MediaResolve(Arr(a, "refs"));
-                case "media.import": return MediaImport();
-                /* 第 233 条：整个文件夹导入 */
-                case "media.importFolderDlg": return MediaImportFolder();
-                case "media.saveBase64": return db.MediaSaveBase64(S(a, "name"), S(a, "data"));
-                case "media.scan": return db.MediaScan();
-                case "media.rename": return db.MediaRename(S(a, "id"), S(a, "name", ""));
-                case "media.delete": return db.MediaDelete(S(a, "id"), I(a, "hard", 0));
-                case "media.rebuildThumbs": return db.MediaRebuildThumbs();
-                case "media.openFolder":
-                    {
-                        Directory.CreateDirectory(db.ImportDir);
-                        OpenPath(db.MediaDir);
-                        return new { ok = true };
-                    }
-                case "media.openImport":
-                    {
-                        Directory.CreateDirectory(db.ImportDir);
-                        OpenPath(db.ImportDir);
-                        return new { ok = true };
-                    }
-
-                /* 统计 */
-                case "stats.overview": return db.Overview(SN(a, "from"), SN(a, "to"));
-                case "stats.calendar": return db.Calendar(S(a, "ym"));
-                /* 第 157 条：重置统计（只清番茄/打卡记录，日记绝不动） */
-                case "stats.reset": return db.StatsReset(S(a, "what", "all"));
-                case "onthisday": return db.OnThisDay();
-
-                /* 导出 */
-                case "export.json": return db.ExportJson();
-                case "export.md": return db.ExportMd();
-                case "export.csv": return db.ExportCsv();
-
-                /* 系统 */
-                case "app.openRoot": OpenPath(db.Root); return new { ok = true };
-                case "app.openMedia": OpenPath(db.MediaDir); return new { ok = true };
-                case "app.openExport": OpenPath(db.ExportDir); return new { ok = true };
-                case "app.pickFolder": return PickFolder();
-                case "app.changeRoot": return ChangeRoot();
-                case "app.diagnostics": return db.Diagnostics();
-            }
-            throw new Exception("未知方法: " + m);
-        }
+        /// <summary>
+        /// 分发的唯一入口。真正的实现搬到了 RpcDispatcher.cs —— 桌面和安卓共用同一份。
+        ///
+        /// 为什么要搬：原来这 280 个 case 散在 6 个 partial 文件里，只有 3 个
+        /// 真的依赖窗体（全局热键、窗体配色、壳操作）。安卓要复用，
+        /// 复制一份必然分叉；抽成共享文件后，「手机上调某个接口没反应」
+        /// 这种问题从"两处实现漂移"变成"只有一处，看得见"。
+        ///
+        /// 桌面独有的两件事通过委托注进 RpcDispatcher（见构造函数末尾）。
+        /// </summary>
+        private object Dispatch(string m, JsonElement a) => RpcDispatcher.Invoke(db, m, a);
 
         /* ---------------- 文件对话框 ---------------- */
 
@@ -812,6 +777,53 @@ namespace Riqian
             catch (Exception ex) { Diag.Error("host", "宿主操作失败", ex); }
         }
 
+        /* ==================================================================
+         * 给 IShell 用的窄口子（internal，不对外）
+         *
+         * 为什么要这些 Public 后缀的转发方法，而不是把原来那些 private
+         * 直接改成 internal：
+         *   · 这些动作里有的带 await、有的涉及关闭流程，签名不适合直接暴露
+         *   · 留着原名不动，五个 partial 文件里的调用点一个字都不用改，
+         *     改动面越小，回归风险越小
+         *
+         * 命名带 Public 是刻意的丑 —— 一眼能看出"这是被外面借用的"，
+         * 免得以后有人以为它是给界面用的正常入口。
+         * ================================================================== */
+
+        internal void OpenPathPublic(string p) => OpenPath(p);
+        internal void MinimizePublic() { WindowState = FormWindowState.Minimized; }
+        internal void QuitPublic() => QuitApp();
+        internal void QuickCapturePublic(string kind) => QuickCapture(kind);
+
+        internal object MediaImportPublic() => MediaImport();
+        internal object MediaImportFolderPublic() => MediaImportFolder();
+
+        internal string PickFolderPublic(string startAt)
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = "选择目录",
+                SelectedPath = string.IsNullOrEmpty(startAt) ? "" : startAt,
+            };
+            return dlg.ShowDialog(this) == DialogResult.OK ? dlg.SelectedPath : null;
+        }
+
+        /// <summary>
+        /// 简版通知：只弹窗，不问托盘。给 IShell 用。
+        ///
+        /// 完整的 notify.push 仍然走 NotifyPush（要读设置、处理单条覆盖），
+        /// 那两个不是同一件事：这里是"壳能发通知"，那里是"提醒该怎么发"。
+        /// </summary>
+        internal object NotifySimple(string title, string body)
+        {
+            try
+            {
+                ShowToast(string.IsNullOrWhiteSpace(title) ? "日签" : title, body ?? "", "info", 6);
+                return new { ok = true };
+            }
+            catch (Exception ex) { return new { ok = false, err = ex.Message }; }
+        }
+
         /* ---------------- 关闭 ---------------- */
 
         private async void OnClosing(object sender, FormClosingEventArgs e)
@@ -830,6 +842,34 @@ namespace Riqian
             if (closing) return;
             closing = true;
             e.Cancel = true;
+
+            await GracefulShutdownAsync();
+            Close();
+        }
+
+        /// <summary>
+        /// 真正的关闭流程：停定时器 → 让界面落盘 → 关库 → 摘静态委托。
+        ///
+        /// **为什么必须抽出来**：原来这一整段只写在 OnClosing 里，而 OnClosing 的
+        /// 第一行是 `if (reallyExit) return;` —— 而托盘「退出」走的正是
+        /// `QuitApp()`，它先把 reallyExit 置 true 再 Close()。
+        /// 结果就是：**从托盘退出时，这段清理一次都没跑过**。
+        ///
+        /// 后果不是崩溃，是更难发现的东西：
+        ///   · db 没 Dispose → WAL 不 checkpoint（`日签.db-wal` 会残留，前几天实机上见过 4 MB）
+        ///   · 定时器没停 → 退出途中还在调 db
+        ///   · 静态委托没摘 → 残留指向已销毁窗体
+        ///
+        /// 两条退出路径（点 X / 托盘退出）现在共用这一个方法，不会再分叉。
+        /// </summary>
+        private async Task GracefulShutdownAsync()
+        {
+            /*
+             * 先停「报警 / 打卡 / 节日」那个 30 秒定时器，再关库。
+             * 顺序反过来就是「定时器比它用的东西活得久」—— 和提醒窗同一类 bug。
+             */
+            try { _alarmTimer?.Stop(); _alarmTimer?.Dispose(); _alarmTimer = null; } catch { }
+
             try
             {
                 if (web.CoreWebView2 != null)
@@ -842,13 +882,52 @@ namespace Riqian
 
             /* 关库必须放在 flush 之后：前端可能还在写最后一条（比如刚打完的卡），
                先把界面那边的事等干净，再 checkpoint + 关连接。
-               
+
                以前这里没有这一句，靠进程退出时 OS 回收 —— 后果是 WAL 从来没被
                checkpoint 过，`日签.db-wal` 会一直涨（实机上见过 4 MB 的），
                而且"拷走整个数据目录"会拿到一个不含最后几次写入的库。 */
             try { db?.Dispose(); } catch (Exception ex) { Diag.Warn("app.exit", "关闭数据库时出错", ex); }
 
-            Close();
+            /* 最后摘掉指向本窗体的静态委托（见方法说明）。 */
+            DetachGlobals();
+        }
+
+        /// <summary>把注册到静态入口上的委托全部摘掉。见 OnClosing 里的说明。</summary>
+        private void DetachGlobals()
+        {
+            try
+            {
+                Shell.Current = new ShellNone();
+                RpcDispatcher.HotkeyApply = null;
+                RpcDispatcher.UiChrome = null;
+
+                Host.ChangeRootFn = null;
+                Host.ExportNoteFn = null;
+                Host.FontImportFn = null;
+                Host.MusicImportFn = null;
+                Host.NotifyPushFn = null;
+                Host.OpenExternalFn = null;
+                Host.AutostartSetFn = null;
+                Host.AutostartGetFn = null;
+                Host.ScreenInfoFn = null;
+                Host.ShowToastFn = null;
+                Host.InitTrayFn = null;
+                Host.SetTrayLockedFn = null;
+                Host.ApplyShellFn = null;
+                Host.ApplyOrbFn = null;
+                Host.ToggleBossFn = null;
+                Host.QuickStateFn = null;
+                Host.TrayLockedFn = null;
+                Host.BossOnFn = null;
+                Host.OrbVisibleFn = null;
+                Host.HotkeyCountFn = null;
+                Host.StickyOpenFn = null;
+                Host.StickyCloseFn = null;
+                Host.StickyListFn = null;
+                Host.DebugApiApplyFn = null;
+                Host.DebugApiInfoFn = null;
+            }
+            catch (Exception ex) { Diag.Warn("app.exit", "摘除静态委托时出错", ex); }
         }
     }
 }

@@ -24,6 +24,7 @@ const mb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} M
 export function CacheCenterView() {
   const toast = useStore((s) => s.toast);
   const settings = useStore((s) => s.settings);
+  const go = useStore((s) => s.go);
   /* 第 26 条那段要显示「几个链接音频 / 几个已缓存」，直接读音乐库自己的清单 */
   const [music, setMusic] = useState<{ id: string; url?: string; cached?: number }[]>([]);
   useEffect(() => { void api.music.list().then(setMusic).catch(() => setMusic([])); }, []);
@@ -80,6 +81,11 @@ export function CacheCenterView() {
         lock={{ scope: 'cache', label: '缓存中心' }}
         right={(
           <div className="row" style={{ gap: 8 }}>
+            {/* #246：缓存已从导航栏移到设置，这里必须给一条回去的路 ——
+                否则用户点进来之后，侧栏里没有高亮项，会觉得「卡在这一页了」 */}
+            <button className="btn sm ghost" onClick={() => void go('settings')} title="回到设置的数据与缓存">
+              <Icon name="left" size={13} />设置
+            </button>
             <button className="btn sm" onClick={() => void load()} title="重新统计">
               <Icon name="refresh" size={13} />刷新
             </button>

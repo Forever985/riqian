@@ -303,72 +303,90 @@ export function FlowView() {
             const d = parseKey(it.date);
             const mv = moodMod ? Number(it.values[moodMod.id]) : 0;
             const mood = mv ? MOODS.find((x) => x.v === mv)?.e : '';
+            /*
+             * #244：这一天加了密码。
+             *
+             * 后端 entry.list 已经不再返回它的正文（title/plain/values/tags 全是空的），
+             * 这里只是别把它画成「一天什么都没写」—— 那会让用户以为内容丢了。
+             * 明确说一句「被保护了」，并给一个去「今天」解锁的入口。
+             */
+            const locked = !!it.locked;
             return (
               <article
                 className="fw-entry"
                 key={it.date}
                 data-entry={it.date}
-                onContextMenu={(e) => ctx.open(e, menuFor(it))}
+                onContextMenu={(e) => { if (!locked) ctx.open(e, menuFor(it)); }}
               >
-                {/*
-                 * 第 215 条：原来顺序是「标题 → 背景图 → 日期」，图片夹在标题和日期中间，
-                 * 看着像属于上一天。现在统一成「日期 → 标题 → 图 → 正文」：
-                 * 日期永远是这一格的开始，图片落在它下面，归属就一眼清楚。
-                 */}
                 <div className="fw-date">
                   <span className="d">{d.getMonth() + 1}月{d.getDate()}日</span>
                   <span className="w">星期{WD[d.getDay()]} {d.getFullYear()}</span>
                   <span className="meta">
-                    {(it.tags || []).map((t) => <span className="tag" key={t}>{t}</span>)}
-                    <span>{it.chars || 0} 字</span>
-                    {mood ? <span>{mood}</span> : null}
-                    <span
-                      className="star"
-                      style={{ cursor: 'pointer' }}
-                      onClick={async () => {
-                        const nv = it.fav ? 0 : 1;
-                        await api.entry.fav(it.date, nv);
-                        setItems((prev) => prev.map((x) => (x.date === it.date ? { ...x, fav: nv } : x)));
-                      }}
-                    >
-                      {it.fav ? '★' : '☆'}
-                    </span>
+                    {locked ? (
+                      <span style={{ color: 'var(--ink3)' }}>🔒 已加锁</span>
+                    ) : (
+                      <>
+                        {(it.tags || []).map((t) => <span className="tag" key={t}>{t}</span>)}
+                        <span>{it.chars || 0} 字</span>
+                        {mood ? <span>{mood}</span> : null}
+                        <span
+                          className="star"
+                          style={{ cursor: 'pointer' }}
+                          onClick={async () => {
+                            const nv = it.fav ? 0 : 1;
+                            await api.entry.fav(it.date, nv);
+                            setItems((prev) => prev.map((x) => (x.date === it.date ? { ...x, fav: nv } : x)));
+                          }}
+                        >
+                          {it.fav ? '★' : '☆'}
+                        </span>
+                      </>
+                    )}
                     <span style={{ cursor: 'pointer' }} onClick={() => void setDate(it.date)}>打开</span>
                   </span>
                 </div>
-                {it.title ? <h3 className="fw-title">{it.title}</h3> : null}
-                {/* 只有背景没有正文的一天：把背景铺成一条，别让它看起来是空条目 */}
-                {it.bg ? (
-                  <button
-                    className="fw-bg"
-                    title="这一天设了背景，点开看看"
-                    onClick={() => void setDate(it.date)}
-                    style={it.bg.startsWith('#') ? { background: it.bg } : undefined}
-                  >
-                    {/* 和「今天」页同一套参数：背景层单独一层，调色不会染到下面那行小字 */}
-                    {!it.bg.startsWith('#') ? (
-                      <>
-                        <i className="fw-bg-fill" style={bgLayerStyle(imgUrl(it.bg), parseBg(it.bgTone))} />
-                        {parseBg(it.bgTone).veil > 0.01 ? (
-                          <i className="fw-bg-veil" style={{ opacity: parseBg(it.bgTone).veil }} />
+                {locked ? (
+                  <div className="fw-locked">
+                    <span>这一天的日记设了密码，先解锁才能在这里看到。</span>
+                    <button className="btn sm" onClick={() => void setDate(it.date)}>去解锁</button>
+                  </div>
+                ) : (
+                  <>
+                    {it.title ? <h3 className="fw-title">{it.title}</h3> : null}
+                    {/* 只有背景没有正文的一天：把背景铺成一条，别让它看起来是空条目 */}
+                    {it.bg ? (
+                      <button
+                        className="fw-bg"
+                        title="这一天设了背景，点开看看"
+                        onClick={() => void setDate(it.date)}
+                        style={it.bg.startsWith('#') ? { background: it.bg } : undefined}
+                      >
+                        {/* 和「今天」页同一套参数：背景层单独一层，调色不会染到下面那行小字 */}
+                        {!it.bg.startsWith('#') ? (
+                          <>
+                            <i className="fw-bg-fill" style={bgLayerStyle(imgUrl(it.bg), parseBg(it.bgTone))} />
+                            {parseBg(it.bgTone).veil > 0.01 ? (
+                              <i className="fw-bg-veil" style={{ opacity: parseBg(it.bgTone).veil }} />
+                            ) : null}
+                          </>
                         ) : null}
-                      </>
+                        {it.chars ? null : <span className="fw-bg-tip">这一天只有一张背景</span>}
+                      </button>
                     ) : null}
-                    {it.chars ? null : <span className="fw-bg-tip">这一天只有一张背景</span>}
-                  </button>
-                ) : null}
-                {rt ? (
-                  <FlowBody
-                    key={it.date}
-                    initial={(it.values[rt.id] as string) || ''}
-                    onInput={(html) => {
-                      setItems((prev) => prev.map((x) => (
-                        x.date === it.date ? { ...x, values: { ...x.values, [rt.id]: html } } : x
-                      )));
-                      queueSave(it.date, { ...it.values, [rt.id]: html }, it.fav, it.bg);
-                    }}
-                  />
-                ) : <div className="empty">没有启用的正文模块</div>}
+                    {rt ? (
+                      <FlowBody
+                        key={it.date}
+                        initial={(it.values[rt.id] as string) || ''}
+                        onInput={(html) => {
+                          setItems((prev) => prev.map((x) => (
+                            x.date === it.date ? { ...x, values: { ...x.values, [rt.id]: html } } : x
+                          )));
+                          queueSave(it.date, { ...it.values, [rt.id]: html }, it.fav, it.bg);
+                        }}
+                      />
+                    ) : <div className="empty">没有启用的正文模块</div>}
+                  </>
+                )}
               </article>
             );
           }) : (

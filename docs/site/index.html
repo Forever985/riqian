@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日签 · 打卡日记本 — 完全本地的 Windows 日记应用</title>
+<meta name="description" content="日签是一个完全本地、单机、离线的个人日记与生活记录桌面程序。数据只存在你自己电脑上的一个 SQLite 文件里，不联网、不要账号、不传云端。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="日签 · 打卡日记本">
+<meta property="og:description" content="完全本地、单机、离线。数据只存在你自己电脑上的一个 SQLite 文件里，不联网、不要账号、不传云端。">
+<meta property="og:image" content="./today.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23e8833a'/><text y='72' x='50' font-size='58' text-anchor='middle' fill='white' font-family='serif'>日</text></svg>">
+<style>
+  :root {
+    --bg: #faf8f4;
+    --bg-2: #f2ede4;
+    --card: #ffffff;
+    --ink: #23201c;
+    --ink-2: #5c554c;
+    --ink-3: #8b8177;
+    --line: #e5ddd1;
+    --accent: #d9722c;
+    --accent-2: #b85c1d;
+    --accent-soft: #fdf0e5;
+    --ok: #4a8c5f;
+    --radius: 14px;
+    --maxw: 1080px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(250, 248, 244, .88);
+    backdrop-filter: saturate(150%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    display: flex; align-items: center; gap: 28px;
+    height: 62px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 17px; color: var(--ink); text-decoration: none;
+    letter-spacing: .02em;
+  }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(145deg, #e8833a, #c9621f);
+    color: #fff; display: grid; place-items: center;
+    font-size: 17px; font-family: "Songti SC", "SimSun", serif;
+    box-shadow: 0 2px 6px rgba(201, 98, 31, .3);
+  }
+  .nav nav { display: flex; gap: 22px; margin-left: auto; align-items: center; }
+  .nav nav a { color: var(--ink-2); text-decoration: none; font-size: 14.5px; }
+  .nav nav a:hover { color: var(--accent-2); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 20px; border-radius: 10px;
+    background: var(--accent); color: #fff !important;
+    font-size: 14.5px; font-weight: 600; text-decoration: none;
+    border: 1px solid var(--accent-2);
+    box-shadow: 0 2px 10px rgba(217, 114, 44, .28);
+    transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+  }
+  .btn:hover { background: var(--accent-2); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(217, 114, 44, .34); }
+  .btn.ghost {
+    background: transparent; color: var(--ink) !important;
+    border: 1px solid var(--line); box-shadow: none;
+  }
+  .btn.ghost:hover { background: var(--bg-2); border-color: #d5c9b8; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 74px 0 62px; }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.05fr .95fr;
+    gap: 52px; align-items: center;
+  }
+  .tagline {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 13px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-2);
+    font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+    border: 1px solid #f3dcc7;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  h1 {
+    font-size: clamp(34px, 4.4vw, 52px);
+    line-height: 1.16; margin: 20px 0 18px;
+    letter-spacing: -.02em; font-weight: 800;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 46ch; margin: 0 0 28px; }
+  .lede strong { color: var(--ink); font-weight: 650; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .meta { margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta code {
+    background: var(--bg-2); padding: 2px 6px; border-radius: 5px;
+    font-size: 12px; color: var(--ink-2);
+  }
+
+  /* 截图卡片 */
+  .shot-frame {
+    border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--line);
+    background: var(--card);
+    box-shadow: 0 18px 46px -12px rgba(60, 45, 30, .22), 0 2px 6px rgba(60, 45, 30, .06);
+  }
+  .shot-bar {
+    display: flex; align-items: center; gap: 7px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #fdfcfa, #f7f3ec);
+  }
+  .shot-bar i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+  .shot-bar i:nth-child(1) { background: #ec6a5f; }
+  .shot-bar i:nth-child(2) { background: #f4bf4f; }
+  .shot-bar i:nth-child(3) { background: #61c454; }
+  .shot-bar span { margin-left: 8px; font-size: 11.5px; color: var(--ink-3); }
+  .shot-frame img { display: block; width: 100%; height: auto; }
+
+  /* ---------- 特性 ---------- */
+  section { padding: 66px 0; }
+  .sec-head { margin-bottom: 38px; }
+  .sec-head h2 {
+    font-size: 27px; margin: 0 0 8px; letter-spacing: -.01em; font-weight: 750;
+  }
+  .sec-head p { margin: 0; color: var(--ink-3); font-size: 14.5px; }
+
+  .feat {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  }
+  .feat-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 20px;
+    transition: border-color .15s, box-shadow .15s, transform .15s;
+  }
+  .feat-card:hover {
+    border-color: #ddcdb6; transform: translateY(-2px);
+    box-shadow: 0 8px 22px -10px rgba(60, 45, 30, .16);
+  }
+  .feat-card h3 { margin: 0 0 7px; font-size: 15.5px; font-weight: 700; }
+  .feat-card p { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.65; }
+  .ico {
+    width: 34px; height: 34px; border-radius: 9px; margin-bottom: 13px;
+    display: grid; place-items: center; background: var(--accent-soft);
+    color: var(--accent-2); font-size: 17px;
+  }
+
+  /* ---------- 隐私 ---------- */
+  .privacy {
+    background: linear-gradient(160deg, #f7f2e9, #fbf8f2);
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  .privacy-in { max-width: 780px; margin: 0 auto; text-align: center; }
+  .privacy h2 { font-size: 26px; margin: 0 0 14px; font-weight: 750; }
+  .privacy p { font-size: 15.5px; color: var(--ink-2); margin: 0 0 26px; }
+  .flow {
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px; flex-wrap: wrap; margin-top: 8px;
+  }
+  .flow-node {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 11px 18px; font-size: 13.5px;
+    font-weight: 600; color: var(--ink);
+  }
+  .flow-node.hi { border-color: #e9c9a8; background: var(--accent-soft); color: var(--accent-2); }
+  .flow-arrow { color: var(--ink-3); font-size: 15px; }
+  .flow-x { color: #c0564a; font-weight: 700; }
+
+  /* ---------- 截图墙 ---------- */
+  .shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .shots figure { margin: 0; }
+  .shots .shot-frame { box-shadow: 0 10px 28px -14px rgba(60, 45, 30, .22); }
+  .shots figcaption {
+    margin-top: 9px; font-size: 13px; color: var(--ink-3); padding-left: 2px;
+  }
+
+  /* ---------- 下载 ---------- */
+  .dl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .dl-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px 22px; display: flex; flex-direction: column;
+  }
+  .dl-card.recommend { border-color: #e9c9a8; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .dl-card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+  .dl-card .sub { font-size: 12.5px; color: var(--ink-3); margin: 0 0 16px; }
+  .dl-card .who { font-size: 13.5px; color: var(--ink-2); margin: 0 0 18px; flex: 1; }
+  .dl-card .btn { justify-content: center; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 5px;
+    background: var(--accent); color: #fff; margin-left: 7px; vertical-align: 2px;
+  }
+  .note {
+    margin-top: 22px; padding: 14px 18px;
+    background: var(--bg-2); border-radius: 10px;
+    font-size: 13px; color: var(--ink-2); border: 1px solid var(--line);
+  }
+  .note strong { color: var(--ink); }
+
+  /* ---------- 技术 ---------- */
+  table.tech { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.tech th, table.tech td {
+    text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line);
+  }
+  table.tech th { font-weight: 600; color: var(--ink-3); font-size: 12.5px; letter-spacing: .03em; text-transform: uppercase; }
+  table.tech td { color: var(--ink-2); }
+  table.tech td:first-child { color: var(--ink); font-weight: 550; width: 160px; }
+  table.tech code {
+    background: var(--bg-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px;
+  }
+
+  /* ---------- 页脚 ---------- */
+  footer {
+    border-top: 1px solid var(--line); padding: 34px 0 46px;
+    font-size: 13px; color: var(--ink-3);
+  }
+  footer .frow { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; align-items: center; }
+  footer a { color: var(--ink-2); text-decoration: none; margin-right: 18px; }
+  footer a:hover { color: var(--accent-2); text-decoration: underline; }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 880px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 34px; }
+    .feat { grid-template-columns: repeat(2, 1fr); }
+    .dl-grid { grid-template-columns: 1fr; }
+    .shots { grid-template-columns: 1fr; }
+    .nav nav a:not(.btn) { display: none; }
+    .hero { padding: 46px 0 40px; }
+    section { padding: 46px 0; }
+  }
+  @media (max-width: 560px) {
+    .feat { grid-template-columns: 1fr; }
+    .wrap { padding: 0 18px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#">
+      <span class="mark">日</span>
+      <span>日签</span>
+    </a>
+    <nav>
+      <a href="#features">功能</a>
+      <a href="#privacy">隐私</a>
+      <a href="#shots">截图</a>
+      <a href="#download">下载</a>
+      <a class="btn" href="#download">免费下载</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="tagline"><span class="dot"></span>v12.9.5 · Windows 10 / 11</span>
+      <h1>你的日记，<br>只存在<em>你自己的电脑</em>里。</h1>
+      <p class="lede">
+        日签是一个完全本地、单机、离线的个人日记与生活记录桌面程序。
+        数据只存在你电脑上的一个 SQLite 文件里 ——
+        <strong>不联网、不要账号、不上传云端</strong>。
+      </p>
+      <div class="cta-row">
+        <a class="btn" href="#download">下载 Windows 版</a>
+        <a class="btn ghost" href="#features">看看能做什么</a>
+      </div>
+      <p class="meta">单文件 exe · 免安装可用 · MIT 开源 · 需要 <code>WebView2</code>（Win11 自带）</p>
+    </div>
+    <div>
+      <div class="shot-frame">
+        <div class="shot-bar"><i></i><i></i><i></i><span>今日</span></div>
+        <img src="./today.png" alt="日签「今日」界面：日期、天气、心情、打卡与当日日记" width="1380" height="920">
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>围绕「一天」这个单位构建</h2>
+      <p>不是又一个 Markdown 编辑器。日记、打卡、待办、计时长在同一根时间轴上。</p>
+    </div>
+    <div class="feat">
+      <div class="feat-card">
+        <div class="ico">✎</div>
+        <h3>日记</h3>
+        <p>富文本 / Markdown / BBCode 三种写法。模块化拼装：心情、天气、睡眠、图片、引用、LaTeX 公式，想加什么加什么。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">✓</div>
+        <h3>打卡</h3>
+        <p>不只是打勾。可以记几点起床、跑步多少分钟、读了几页 —— 数值型习惯会自己长成趋势图。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">☰</div>
+        <h3>待办</h3>
+        <p>输入「明天下午三点开会」自动识别日期时间。四象限优先级、子清单、重复规则、清单分组。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">⏱</div>
+        <h3>番茄钟</h3>
+        <p>专注计时 + 统计 + 按天／周／月的图表。关掉窗口也会继续跑，结束提醒。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">⏳</div>
+        <h3>倒计时</h3>
+        <p>纪念日、目标日。认得「每月最后一个周四 交房租」这种说法，也能手动排序置顶。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">▤</div>
+        <h3>回顾</h3>
+        <p>日历热力图、那年今日、全文搜索、标签、收藏、跨天引用 —— 写下的东西要能找得回来。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">✎</div>
+        <h3>桌面便签</h3>
+        <p>任意笔记可以钉成一扇小窗浮在桌面上。双击标题栏切尺寸，改完自动落库。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">▦</div>
+        <h3>笔记</h3>
+        <p>无限层级嵌套的笔记本树。也支持画板、多媒体库、附件。</p>
+      </div>
+      <div class="feat-card">
+        <div class="ico">¥</div>
+        <h3>还有这些</h3>
+        <p>记账本、提醒闹钟、储蓄罐、统计面板、时间轴、全局快捷键唤出快速记录。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="privacy" id="privacy">
+  <div class="wrap privacy-in">
+    <h2>没有服务器，所以没有「上云」这回事</h2>
+    <p>
+      大多数日记软件的隐私承诺靠「我们不会看」。日签的承诺靠架构：
+      它根本没有可上传的地方。断网也完全能用。
+    </p>
+    <div class="flow">
+      <span class="flow-node">你的输入</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node hi">本地 riqian.db</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node">你自己的磁盘</span>
+      <span class="flow-arrow flow-x">✕</span>
+      <span class="flow-node" style="color:#c0564a;border-style:dashed;">任何服务器</span>
+    </div>
+    <p style="margin-top:26px;font-size:13.5px;color:var(--ink-3);">
+      想备份？把整个数据文件夹拷到网盘或 U 盘就是完整备份。<br>
+      想换电脑？拷回去就行，不需要登录、不需要迁移向导。
+    </p>
+  </div>
+</section>
+
+<section id="shots">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>界面</h2>
+      <p>真实截图，没有修饰。四个语言（中／英／日／德）都有对应字体栈。</p>
+    </div>
+    <div class="shots">
+      <figure>
+        <div class="shot-frame">
+          <div class="shot-bar"><i></i><i></i><i></i><span>待办</span></div>
+          <img src="./todos.png" alt="待办清单：四象限、子任务、重复规则" loading="lazy" width="1380" height="920">
+        </div>
+        <figcaption>待办 —— 四象限、子清单、自然语言识别日期</figcaption>
+      </figure>
+      <figure>
+        <div class="shot-frame">
+          <div class="shot-bar"><i></i><i></i><i></i><span>日历回顾</span></div>
+          <img src="./calendar.png" alt="日历热力图与那年今日" loading="lazy" width="1380" height="920">
+        </div>
+        <figcaption>日历回顾 —— 热力图一眼看出哪段时间坚持得好</figcaption>
+      </figure>
+      <figure>
+        <div class="shot-frame">
+          <div class="shot-bar"><i></i><i></i><i></i><span>专注统计</span></div>
+          <img src="./stats.png" alt="番茄钟专注统计图表" loading="lazy" width="1380" height="920">
+        </div>
+        <figcaption>统计 —— 番茄钟与打卡数据的趋势</figcaption>
+      </figure>
+      <figure>
+        <div class="shot-frame">
+          <div class="shot-bar"><i></i><i></i><i></i><span>模块模板</span></div>
+          <img src="./templates.png" alt="日记模块模板库" loading="lazy" width="1380" height="920">
+        </div>
+        <figcaption>模块模板 —— 日记按块拼装，不用从头写</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>下载</h2>
+      <p>全部免费、MIT 开源。三个包是同一个程序，按你的习惯挑一个。</p>
+    </div>
+    <div class="dl-grid">
+      <div class="dl-card recommend">
+        <h3>安装版<span class="badge">推荐</span></h3>
+        <p class="sub">Riqian-Setup-12.9.5.exe · 约 61 MB</p>
+        <p class="who">想装到开始菜单、能像普通软件那样卸载。<br>数据默认放 <code>%APPDATA%</code> 里配的目录。</p>
+        <a class="btn" id="dl-setup" href="https://github.com/Forever985/riqian/releases/latest">下载安装程序</a>
+      </div>
+      <div class="dl-card">
+        <h3>绿色版</h3>
+        <p class="sub">Riqian-Portable-12.9.5.zip · 约 60 MB</p>
+        <p class="who">不想装，解压即用。数据跟着文件夹走，<br>放 U 盘带走也算完整迁移。</p>
+        <a class="btn ghost" id="dl-portable" href="https://github.com/Forever985/riqian/releases/latest">下载压缩包</a>
+      </div>
+      <div class="dl-card">
+        <h3>源码</h3>
+        <p class="sub">Riqian-Source-12.9.5.zip · 约 2.6 MB</p>
+        <p class="who">想看代码、自己改、自己编译。<br>不含构建产物，需要 .NET 8 与 Node 18+。</p>
+        <a class="btn ghost" href="https://github.com/Forever985/riqian/tree/main">去仓库</a>
+      </div>
+    </div>
+    <div class="note">
+      <strong>安装版和绿色版是同一个 exe</strong>，差别只在旁边有没有一个 <code>portable.txt</code>：
+      有 → 数据放 exe 同级的「日签数据」文件夹；没有 → 数据放 <code>%APPDATA%</code> 里配的目录。
+      你随时可以自己建一个这个空文件把安装版转成便携版，不用重装。<br><br>
+      两个包都需要 <a href="https://developer.microsoft.com/microsoft-edge/webview2/">WebView2 运行时</a>
+      （Win11 自带，Win10 多数也装过；真缺了程序会提示）。<br>
+      下载后可以用 <code>SHA256SUMS.txt</code> 核对哈希。
+    </div>
+  </div>
+</section>
+
+<section id="tech" style="border-top:1px solid var(--line);">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>技术上是什么</h2>
+      <p>如果你想知道它为什么是 60 MB 的单文件、以及为什么数据能这么稳。</p>
+    </div>
+    <table class="tech">
+      <tr>
+        <td>宿主</td>
+        <td>C# / WinForms 单窗口，内嵌 WebView2 渲染界面。整个界面和逻辑打进一个 exe。</td>
+      </tr>
+      <tr>
+        <td>界面</td>
+        <td>React 18 + TypeScript + Vite，打包成单个 <code>index.html</code> 内联进 exe（约 1.4 MB）。</td>
+      </tr>
+      <tr>
+        <td>数据</td>
+        <td>SQLite 单文件，WAL 模式，关闭时强制 checkpoint。导出、备份、换机器都只是拷文件。</td>
+      </tr>
+      <tr>
+        <td>通信</td>
+        <td>WebView2 进程内消息通道，<strong>不开端口、不起本地服务</strong>。共 226 个 RPC 方法。</td>
+      </tr>
+      <tr>
+        <td>质量</td>
+        <td>CI 每次提交跑 13 步：全新环境构建 → 体积检查 → 全新装机自检 → 真启动打 10 个只读接口。</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap frow">
+    <div>
+      <a href="https://github.com/Forever985/riqian">GitHub</a>
+      <a href="https://github.com/Forever985/riqian/releases">版本历史</a>
+      <a href="https://github.com/Forever985/riqian/issues">反馈问题</a>
+      <a href="https://github.com/Forever985/riqian/blob/main/LICENSE">MIT 许可证</a>
+    </div>
+    <div>© 2026 Forever985 · 日签 v12.9.5</div>
+  </div>
+</footer>
+
+<script>
+/* 把下载链接指向真正的 assets。
+ *
+ * 为什么不直接写死绝对 URL：版本号会变，写死就意味着每次发版都要改这个页面，
+ * 而忘了改的那次，用户点下载会拿到 404。这里问一次 GitHub API 的 latest release，
+ * 有 assets 就把按钮指过去；拿不到（断网 / API 限流 / 还没发版）就保留
+ * /releases/latest 这个兜底地址 —— 那个地址永远能打开。
+ */
+(function () {
+  var API = 'https://api.github.com/repos/Forever985/riqian/releases/latest';
+  fetch(API, { headers: { Accept: 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (rel) {
+      if (!rel || !rel.assets) return;
+      var map = { 'dl-setup': /-Setup-.*\.exe$/i, 'dl-portable': /-Portable-.*\.zip$/i };
+      rel.assets.forEach(function (a) {
+        Object.keys(map).forEach(function (id) {
+          if (!map[id].test(a.name)) return;
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.href = a.browser_download_url;
+          el.setAttribute('download', '');
+          // 顺手把体积换成真实值，省得写的数字过时
+          var size = (a.size / 1048576).toFixed(0);
+          var sub = el.closest('.dl-card').querySelector('.sub');
+          if (sub) sub.textContent = sub.textContent.replace(/约 \d+ MB/, '约 ' + size + ' MB');
+        });
+      });
+      // 标题里带上真实版本号，跟实际下载的东西对齐
+      if (rel.tag_name) {
+        document.querySelectorAll('.tagline').forEach(function (t) {
+          t.innerHTML = t.innerHTML.replace(/v[\d.]+/, rel.tag_name);
+        });
+      }
+    })
+    .catch(function () { /* 静默失败：兜底链接本来就可用 */ });
+})();
+</script>
+
+</body>
+</html>

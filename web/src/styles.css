@@ -375,7 +375,18 @@ h1,h2,h3,h4{margin:0;font-weight:600}
   padding:3px 11px;font-size:13px;color:var(--ink2);transition:.14s;
 }
 .chip:hover{border-color:var(--ink3);color:var(--ink)}
-.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/*
+ * #243：选中标签的底色压深一点。
+ *
+ * 纸质主题的 accent 是 #b8623a，配白字实测对比度只有 4.33:1，
+ * 低于 WCAG AA 要求的 4.5 —— 也就是说除了「白字压玻璃底」那个显眼的 bug 之外，
+ * 它本身也踩在及格线底下，小字号下确实发飘。
+ * 混 12% 黑把它压到 5.3:1，色相不变、只是深一档，看起来仍是同一个主色。
+ *
+ * 深色主题的 accent 本来就偏亮（#dd8a5c 配白字只有 2.67:1），
+ * 压深同样是把对比度往上抬（→3.4:1），不亏。
+ */
+.chip.on{background:color-mix(in srgb,var(--accent) 88%,#000);border-color:color-mix(in srgb,var(--accent) 88%,#000);color:#fff}
 .chip .x{margin-left:4px;opacity:.6}
 
 /* ---------- 排序条（第 200/201/202/227/230 条）----------
@@ -423,7 +434,13 @@ h1,h2,h3,h4{margin:0;font-weight:600}
 }
 .dnav:hover{background:var(--panel2);color:var(--ink)}
 .datehead .d2{font-size:12.5px;color:var(--ink3);padding-bottom:4px}
-.datehead .rt{margin-left:auto;display:flex;gap:6px;align-items:center}
+/*
+ * #248 衍生修复：这排按钮原来不换行，加了「删除」之后直接挤出容器
+ * （实测 478px 宽时「删除」「回到今天」跑到外面，横向溢出）。
+ * 外层 .datehead 是 flex-wrap:wrap 的，但它管不到 .rt 内部 ——
+ * .rt 自己是一个不换行的 flex，所以必须在这里也允许换行。
+ */
+.datehead .rt{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 
 .mods{display:flex;flex-direction:column;gap:var(--modgap,0px)}
 /*
@@ -604,6 +621,13 @@ html[data-appbg] .mod{background:color-mix(in srgb,var(--panel) 86%,transparent)
 .flow.focus .fw-entry.active{opacity:1}
 .flow.tw .fw-body{min-height:80px}
 .fw-empty{text-align:center;color:var(--ink3);padding:60px 0}
+/* #244：流里被加锁的那一天。给足高度，别让相邻两天挤在一起看不出少了东西 */
+.fw-locked{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:22px 16px;border-radius:var(--r);
+  background:var(--panel2);border:1px dashed var(--line);
+  color:var(--ink3);font-size:13.5px;
+}
 
 /* ---------- 日历 ---------- */
 .calhead{display:flex;align-items:center;gap:10px;margin-bottom:14px}
@@ -2411,7 +2435,16 @@ html[data-theme="dark"] .cell.l4 .n{color:#1a1512}
 .card.hasbg > .card-inner .btn.ghost,
 .card.hasbg > .card-inner .mod-tools button,
 .card.hasbg > .card-inner .seg,
-.card.hasbg > .card-inner .chip,
+/*
+ * #243：这里必须排除 .chip.on。
+ *
+ * 原来的写法把「选中标签」的实底也一起换成了 --glass（半透明面板色），
+ * 但 .chip.on 自己的 color:#fff 没变 —— 于是变成白字压一层很浅的玻璃底。
+ * 纸质主题的 panel 本来就是米白，白字几乎完全看不见；深色主题反而正常，
+ * 所以这个 bug 只在浅色主题下暴露，看起来像「颜色没跟着主题切换」。
+ * 选中态要的是「实心强调色块」，不是玻璃底，不该被这条规则管。
+ */
+.card.hasbg > .card-inner .chip:not(.on),
 .card.hasbg > .card-inner .toolbar{
   background: var(--glass);
   backdrop-filter: blur(10px);
@@ -3952,3 +3985,41 @@ html[lang="de"] .cal-grid .d,html[lang="de"] .calcell{letter-spacing:-.01em}
  * 用最浅的底色 + 文字提亮就够，加边框会显得像按钮。
  */
 .sum-hist .h-main:hover{background:var(--tap-hi);color:var(--ink)}
+
+/* ---------- 愿望单（#250） ----------
+ * 刻意做得比"待办"轻：
+ *   · 没有左侧色条、没有优先级小旗 —— 那些是"该做的事"的视觉语言
+ *   · 实现之后整行淡下去而不是划掉：划掉像"完成了一项任务"，
+ *     愿望实现应该是"它归你了"，不该留着叉号的痕迹
+ */
+.wish-sum{display:flex;gap:48px;flex-wrap:wrap}
+.wish-num{font-size:26px;font-weight:600;letter-spacing:-.02em;margin:2px 0;line-height:1.2}
+.wish-num small{font-size:12px;font-weight:400;color:var(--ink3);margin-left:2px}
+
+.wish-row{
+  display:flex;align-items:flex-start;gap:11px;
+  padding:12px 4px;border-bottom:1px dashed var(--line2);
+}
+.wish-row:last-child{border-bottom:none}
+.wish-row.done .wish-title{color:var(--ink3);text-decoration:line-through;text-decoration-color:var(--line)}
+.wish-row.done .wish-price{color:var(--ink3)}
+
+/* 勾选圈：和待办的尺寸一致，但形状用圆 —— 方框是"任务"，圆圈是"想要" */
+.wish-check{
+  flex:0 0 auto;width:19px;height:19px;margin-top:2px;
+  border:1.5px solid var(--line);border-radius:50%;
+  background:transparent;color:#fff;font-size:13px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.14s;
+}
+.wish-check:hover{border-color:var(--accent)}
+.wish-row.done .wish-check{background:var(--accent);border-color:var(--accent)}
+
+.wish-main{flex:1;min-width:0}
+.wish-title{font-size:14.5px;cursor:pointer;line-height:1.45}
+.wish-title:hover{color:var(--accent)}
+.wish-meta{display:flex;flex-wrap:wrap;gap:9px;margin-top:3px;font-size:12px;color:var(--ink3)}
+.wish-price{color:var(--accent2);font-weight:600}
+.wish-pri{padding:0 6px;border-radius:5px;background:var(--accentSoft);color:var(--accent2)}
+.wish-pri[data-p="3"]{font-weight:600}
+.wish-note{margin-top:4px;font-size:12.5px;color:var(--ink2);line-height:1.65;white-space:pre-wrap}

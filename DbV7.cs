@@ -460,6 +460,23 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
         /// <summary>某范围当前是否锁定。</summary>
         public object VaultCheck(string scope, string target)
         {
+            var (locked, rule) = CheckLocked(scope, target);
+            if (!locked) return new { locked = false };
+            return new { locked = true, label = Str(rule["label"]), own = !string.IsNullOrEmpty(Str(rule["hash"])) };
+        }
+
+        /// <summary>
+        /// 内部版：某范围当前是否锁定，附带命中的规则行。
+        ///
+        /// 抽出来是因为 **列表类接口也要用**（#244）。原来是每个页面各自包一层
+        /// &lt;Guarded&gt;，只在「界面」上挡，数据早就从 entry.list 里发出去了 ——
+        /// 给某一天的日记加了密码，切到「流」「记录」「全局搜索」照样读得到全文。
+        /// 挡在界面上只是看不见，不是拿不到。
+        ///
+        /// 现在数据层自己判断：加锁的那一天，正文/标题/标签一律不往外给。
+        /// </summary>
+        internal (bool locked, Dictionary<string, object> rule) CheckLocked(string scope, string target)
+        {
             var rule = Rows("SELECT * FROM vault WHERE scope=$s AND (target=$t OR target='') ORDER BY (target=$t) DESC LIMIT 1",
                 ("$s", scope), ("$t", target ?? "")).FirstOrDefault();
 
@@ -482,14 +499,30 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
             // 没有规则 = 这个范围不锁。
             // 注意：设置主密码本身不等于「锁住整个软件」，那必须由一条显式的 app 规则来表态，
             // 否则用户只是给「待办」加了锁，却会在启动时被全屏挡住。
-            if (rule == null) return new { locked = false };
+            if (rule == null) return (false, null);
 
             var nowT = DateTime.Now;
             var hit = _unlocked.Values.Any(v => v.exp > nowT &&
                 (v.scope == scope || (scope == "diary" && v.scope == "diaryRange")) &&
                 (v.target == (target ?? "") || string.IsNullOrEmpty(v.target)));
-            if (hit) return new { locked = false };
-            return new { locked = true, label = Str(rule["label"]), own = !string.IsNullOrEmpty(Str(rule["hash"])) };
+            return (!hit, rule);
+        }
+
+        /// <summary>
+        /// 这一天的日记是不是锁着的（#244）。
+        ///
+        /// 列表/搜索类接口在往外吐正文之前必须问一句。已解锁的日期会返回 false ——
+        /// 用户刚输过密码，不该立刻又看不见。
+        /// </summary>
+        internal bool IsDiaryLocked(string date)
+        {
+            if (string.IsNullOrEmpty(date)) return false;
+            /*
+             * 快速短路：一条日记规则都没有时，不要为列表里的每一行都查一次库。
+             * 流页面一次加载 30 条、记录页 300 条，逐行查 vault 表是纯浪费。
+             */
+            if (Int(Scalar("SELECT COUNT(*) FROM vault WHERE scope IN ('diary','diaryRange')")) == 0) return false;
+            return CheckLocked("diary", date).locked;
         }
 
         public object VaultUnlock(string scope, string target, string password, int minutes)
@@ -663,7 +696,7 @@ FROM notebooks b WHERE b.deleted_at IS NULL ORDER BY b.sort, b.rowid")
                    "'0xEF' is an invalid start of a value"，用户手里已有的导出文件就全废了。
                    用 MainForm 里那个统一入口，别在这儿再写一遍 TrimStart ——
                    同一个坑踩两次，就是因为当初只在一处写、另一处漏了。 */
-                json = MainForm.StripJsonPreamble(json);
+                json = TextUtil.StripJsonPreamble(json);
                 if (json.Length == 0) return new { ok = false, err = "内容为空" };
 
                 using var doc = JsonDocument.Parse(json);

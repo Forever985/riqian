@@ -63,6 +63,14 @@ export type ModuleValue = string | number | string[] | QuoteRef[] | null;
 
 export interface Entry {
   date: DateKey;
+  /**
+   * 这一天加了密码，且当前会话没解锁（#244 衍生）。
+   *
+   * 为 true 时 values / tags / title / plain 全是空的，后端没给内容。
+   * 后端两种情况都会显式返回这个字段（锁 = true，没锁 = false），
+   * 所以判断请写 `x.locked === true`，不要用 `!x.locked` 之类依赖 undefined 的写法。
+   */
+  locked?: boolean;
   /** 标题（v9 起）：空字符串表示这一天没起标题 */
   title?: string;
   /** draft | published —— 定稿后默认只读 */
@@ -86,6 +94,14 @@ export interface Entry {
 
 export interface EntryListItem {
   date: DateKey;
+  /**
+   * 这一天加了密码，且当前会话没解锁（#244）。
+   *
+   * 为 true 时后端会把 title / plain / values / tags / chars 全部清空，
+   * 前端只能显示占位。不要用「内容是不是空」去推断锁没锁 ——
+   * 空日记和被锁的日记在这几个字段上长得一模一样，必须看这个标记。
+   */
+  locked?: boolean;
   title?: string;
   status?: string;
   /** 背景调色（v10.1），流里那条背景带也用它 */
@@ -96,6 +112,36 @@ export interface EntryListItem {
   bg: string;
   values: Record<string, ModuleValue>;
   tags: string[];
+}
+
+/** #250：愿望单里的一条 */
+export interface Wish {
+  id: string;
+  title: string;
+  note: string;
+  /** 金额，单位「分」。后端只存整数分，浮点误差在钱上不能忍 */
+  priceCents: number;
+  /** 同一个数换算成元，方便直接显示；两边必须一致 */
+  priceYuan: number;
+  url: string;
+  /** 1 想要 / 2 很想要 / 3 最想要 */
+  priority: number;
+  targetDate: string;
+  done: number;
+  doneAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** #250：愿望单汇总 */
+export interface WishStats {
+  ok: boolean;
+  open: number;
+  done: number;
+  openCents: number;
+  openYuan: number;
+  doneCents: number;
+  doneYuan: number;
 }
 
 export interface Todo {
@@ -373,8 +419,17 @@ export type ViewKey =
   | 'notes' | 'profile' | 'welcome' | 'review'
   | 'changelog' | 'manual' | 'contact' | 'media' | 'music' | 'drafts'
   | 'ledger' | 'alarms' | 'timeline' | 'draw'
+  /* #250：愿望单 */
+  | 'wish'
+  /* #245：主题 / 插件 / 工坊合并后的聚合页 */
+  | 'extensions'
+  /*
+   * 下面三个是 #245 之前的独立入口，**故意保留**：
+   * 用户恢复的选项卡、写过的 navOrder 里可能还存着这些 key，
+   * 删掉会变成「找不到这个页面」。它们仍可路由，只是不再出现在导航栏。
+   */
   | 'themeCenter' | 'pluginCenter' | 'workshop'
-  /* 第 55 条：缓存单独一个入口 */
+  /* #246：缓存入口移到设置，视图保留（从设置页跳过来） */
   | 'cache';
 
 /** 草稿箱里的一条 */
@@ -462,6 +517,14 @@ export interface SummaryRow {
 
 export interface ReviewDay {
   date: string;
+  /**
+   * 这一天加了密码（#244 衍生）。
+   *
+   * 为 true 时 chars / plain / oneLine / mood / weather / tags / images 全部是空值，
+   * 后端已经把内容抹掉了。**不要用「内容是不是空」去判断有没有写** ——
+   * 空日记和被锁的日记在这些字段上完全一样，必须看这个标记。
+   */
+  locked?: boolean;
   chars: number;
   plain: string;
   oneLine: string;

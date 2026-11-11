@@ -904,6 +904,17 @@ function DiarySection() {
     <>
       <div className="card">
         <h3><Icon name="note" size={14} />日记</h3>
+        {/* #249：那年今日的开关。默认开 —— 多数人不知道有这功能，不会主动去找 */}
+        <Row
+          label="显示「那年今日」"
+          sub="在「今天」右侧列出往年同一天写过的内容"
+          kw="那年今日 历史上的今天 往年 回顾 同一天"
+        >
+          <Switch
+            on={String(settings.onThisDay ?? '1') === '1'}
+            onClick={() => void setSetting('onThisDay', String(settings.onThisDay ?? '1') === '1' ? '0' : '1')}
+          />
+        </Row>
         <Row
           label="新的一天从几点开始"
           sub="设成 4 点，凌晨 2 点写的仍算前一天"
@@ -1617,7 +1628,12 @@ function DataSection({ onMedia, diag }: { onMedia: () => void; diag: Diagnostics
               else toast(`已缓存 ${r.done} 个音频到本机`);
             }}
           >立即缓存全部网络音频</button>
-          <button className="btn sm ghost" onClick={() => void useStore.getState().go('profile')}>查看占用 / 立即清理 →</button>
+          {/*
+           * #246：缓存从导航栏搬到这里之后，这个按钮就是它的正式入口。
+           * 以前跳的是「我的」页（那里只是一块概览），现在直接进明细页 ——
+           * 用户点「查看占用 / 立即清理」，想看的就是哪一项占了多少、能不能清。
+           */}
+          <button className="btn sm ghost" onClick={() => void useStore.getState().go('cache')}>查看占用 / 立即清理 →</button>
         </div>
         <div className="small muted" style={{ marginTop: 6, lineHeight: 1.7 }}>
           关掉「缓存音频」或不改上面的后缀，都会直接影响上面这个按钮 —— 它会被拦下来并告诉你原因。

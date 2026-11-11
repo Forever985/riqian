@@ -26,6 +26,8 @@ export const NAV: { k: ViewKey; ic: IconName; t: string; d: string; flag?: strin
   { k: 'records', ic: 'search', t: '记录', d: '所有日记的列表与搜索', flag: 'navRecords' },
   { k: 'todos', ic: 'todo', t: '待办', d: '要做的事，支持四象限和拖动排序', flag: 'navTodos' },
   { k: 'countdown', ic: 'hourglass', t: '倒计时', d: '还有多少天：考试、纪念日、截止日', flag: 'navCountdown' },
+  /* #250：愿望单。放在倒计时后面 —— 两者都是「往前看的日子」，但一个是倒数、一个是攒 */
+  { k: 'wish', ic: 'sparkle', t: '愿望单', d: '想要的东西，攒够了就打勾', flag: 'navWish' },
   { k: 'notes', ic: 'book', t: '笔记', d: '分笔记本的长笔记，富文本可加锁', flag: 'navNotes' },
   { k: 'draw', ic: 'pen', t: '画板', d: '手绘草图，存笔画所以随时能再改', flag: 'navDraw' },
   { k: 'timeline', ic: 'flow', t: '时间轴', d: '记下大事，按年份竖着排开', flag: 'navTimeline' },
@@ -33,15 +35,26 @@ export const NAV: { k: ViewKey; ic: IconName; t: string; d: string; flag?: strin
   { k: 'alarms', ic: 'bell', t: '提醒', d: '定时提醒、每隔多久提醒一次', flag: 'navAlarms' },
   { k: 'drafts', ic: 'archive', t: '草稿箱', d: '写了还没定稿的日子', flag: 'navDrafts' },
   { k: 'media', ic: 'grid', t: '多媒体库', d: '图片、音乐、文件都收在这里', flag: 'navMedia' },
-  /* 第 55 条：缓存单独一个模块，和图片库 / 音乐库平级 —— 用户原话
-     「缓存和图片库、音乐库这种应该专门独立做一个模块（就是在对应的地方有，同时也单独有）」 */
-  { k: 'cache', ic: 'database', t: '缓存', d: '占用明细、清理、链接音频的缓存进度', flag: 'navCache' },
+  /*
+   * #246：缓存从导航移到「设置 → 数据与缓存」。
+   *
+   * 用户原话：「缓存什么的应该放到设置里去。」缓存页做的是「看看占了多少、清一清」，
+   * 一个月也未必点一次，却和「今天 / 待办」抢同一列位置。设置页本来就有
+   * 「数据与缓存」分组，把入口挪过去才是它该待的地方。
+   *
+   * 注意：视图本身没删（ViewKey 里仍有 'cache'），
+   * 只是不再从导航栏进 —— 从设置页跳过去，老的书签 / 恢复的选项卡也不会白屏。
+   */
   { k: 'stats', ic: 'chart', t: '统计', d: '字数、打卡、专注的趋势', flag: 'navStats' },
-  // #241 三个中心：扩展生态入口。放在"设置"前面而不是藏进设置里 ——
-  // 用户拿到别人给的包，第一反应是找"哪里装"，不是翻设置。
-  { k: 'themeCenter', ic: 'palette', t: '主题', d: '内置主题 + 装别人的配色包', flag: 'navThemeCenter' },
-  { k: 'pluginCenter', ic: 'grid', t: '插件', d: '给日记加模块的扩展包', flag: 'navPluginCenter' },
-  { k: 'workshop', ic: 'book', t: '工坊', d: '模板、倒计时、标签这类内容包', flag: 'navWorkshop' },
+  /*
+   * #245：主题 / 插件 / 工坊合并成一个「扩展」。
+   *
+   * 三页原本各占一格，加上缓存一共四格，全是低频的「装点东西」入口，
+   * 把每天要用的几页挤到上面一小撮。合并后内部用选项卡切换，
+   * 入口仍在导航栏（不藏进设置）—— 刚拿到别人的包时，
+   * 人的第一反应是「哪里装」，不会想到翻设置。
+   */
+  { k: 'extensions', ic: 'grid', t: '扩展', d: '主题、插件、内容包', flag: 'navExtensions' },
   { k: 'profile', ic: 'user', t: '我的', d: '头像、资料、数据导入导出', flag: 'navProfile' },
   { k: 'settings', ic: 'sliders', t: '设置', d: '外观、模块、通知、快捷键', },
 ];

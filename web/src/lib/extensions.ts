@@ -257,10 +257,19 @@ export async function installPlugin(p: PluginPack): Promise<{ ok: boolean; err?:
     const host = await pickTagHostDate();
     if (host) {
       const current = await api.entry.get(host).catch(() => null);
-      const have: string[] = ((current as { tags?: string[] } | null)?.tags) || [];
-      const next = Array.from(new Set([...have, ...p.tags]));
-      await api.tags.set(host, next).catch(() => {});
-      createdTags.push(...p.tags.filter((t) => !have.includes(t)));
+      /*
+       * #244 衍生：挑中的那篇如果加了密码，entry.get 返回的空 tags 并不代表
+       * 「这篇没有标签」，而是「读不到」。直接 tags.set 会把它原有的标签全清掉 ——
+       * 装一个插件顺手毁掉用户标签，代价太大。这种情况下就跳过，如实报数。
+       */
+      if ((current as { locked?: boolean } | null)?.locked) {
+        tagSkipped = p.tags.length;
+      } else {
+        const have: string[] = ((current as { tags?: string[] } | null)?.tags) || [];
+        const next = Array.from(new Set([...have, ...p.tags]));
+        await api.tags.set(host, next).catch(() => {});
+        createdTags.push(...p.tags.filter((t) => !have.includes(t)));
+      }
     } else {
       tagSkipped = p.tags.length;
     }

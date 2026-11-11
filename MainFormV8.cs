@@ -187,9 +187,9 @@ namespace Riqian
                  * 用户原话「快捷建立是能直接生成一个浮窗的」——
                  * 记一条待办不该换来一次整屏切走再切回。
                  */
-                case "quick:todo": QuickCapture("todo"); break;
-                case "quick:note": QuickCapture("note"); break;
-                case "quick:diary": QuickCapture("diary"); break;
+                case "quick:todo": Shell.QuickCapture("todo"); break;
+                case "quick:note": Shell.QuickCapture("note"); break;
+                case "quick:diary": Shell.QuickCapture("diary"); break;
                 default: HostCmd(action); break;
             }
         }
@@ -562,75 +562,7 @@ namespace Riqian
 
         /* ================= RPC ================= */
 
-        private object V8Dispatch(string m, JsonElement a)
-        {
-            if (m == "hotkey.apply") return ApplyHotkeys();
-            /*
-             * 第 165 条：浮窗的落库口子。
-             * 浮窗本身不经过 WebView2，但前端也需要一条「和浮窗完全同一套保存逻辑」的通道 ——
-             * 免得快速面板和浮窗对同一句话的落库行为不一样（那是两个 bug）。
-             */
-            if (m == "quick.capture")
-            {
-                var r = db.QuickCaptureSave(S(a, "kind", "todo"), S(a, "text"));
-                return new { ok = r.ok, err = r.err, n = r.n };
-            }
-            /* 浮窗的显示口子：前端也可以主动叫出来（比如按钮点一下） */
-            if (m == "quick.popup") { QuickCapture(S(a, "kind", "todo")); return QuickState(); }
-            if (m == "quick.state") return QuickState();
-            /* 第 75 条：前端锁屏 / 解锁时把状态同步给宿主，托盘图标据此叠小锁角标 */
-            if (m == "shell.lockState")
-            {
-                SetTrayLocked(I(a, "locked", 0) == 1);
-                return new { ok = true, locked = _trayLocked, icon = Get(Settings(), "trayLockIcon", "1") };
-            }
-            if (m == "shell.apply") { ApplyShell(); return new { ok = true, boss = _bossOn }; }
-            /* 第 191 条：开机自启。默认不启动，用户点了才写注册表。 */
-            if (m == "shell.autostart") return AutostartSet(I(a, "on", 0));
-            if (m == "shell.autostartGet") return new { ok = true, on = AutostartGet() ? 1 : 0 };
-            /* 第 90 条：用系统默认程序打开外链 / mailto。
-               WebView2 里 <a href="mailto:"> 点了没反应，必须转到宿主这边用 ShellExecute。 */
-            if (m == "shell.openUrl") return OpenExternal(S(a, "url"));
-            if (m == "shell.hotkeyState")
-            {
-                var s = Settings();
-                return new
-                {
-                    enabled = Get(s, "hotkeyEnable", "1") == "1",
-                    registered = _hotkeyOn.Count,
-                    boss = _bossOn,
-                    orb = _orb != null && !_orb.IsDisposed && _orb.Visible,
-                };
-            }
-            if (m == "boss.toggle") { ToggleBoss("界面按钮"); return new { ok = true, on = _bossOn }; }
-            if (m == "orb.toggle") { ApplyOrb(I(a, "on", 1) == 1); return new { ok = true }; }
-
-            /* ---- 分享 ---- */
-            if (m == "share.image") return db.ShareSaveImage(S(a, "data"), S(a, "name"));
-            if (m == "share.copyImage") return db.ShareCopyImage(S(a, "data"));
-            if (m == "share.copyText") return db.ShareCopyText(S(a, "text"));
-            if (m == "share.html") return db.ShareSaveHtml(S(a, "html"), S(a, "name"));
-
-            /* ---- 总结 ---- */
-            if (m == "summary.list") return db.Summaries();
-            if (m == "summary.get") return db.SummaryGet(S(a, "id"));
-            if (m == "summary.save") return db.SummarySave(S(a, "id"), S(a, "kind"), S(a, "from"), S(a, "to"),
-                                                       S(a, "title"), S(a, "body"), S(a, "plain"));
-            if (m == "summary.delete") return db.SummaryDelete(S(a, "id"));
-            if (m == "summary.pin") return db.SummaryPin(S(a, "id"), I(a, "pinned", 0));
-            if (m == "review.day") return db.ReviewDay(S(a, "date"));
-            if (m == "review.range") return db.ReviewRange(S(a, "from"), S(a, "to"));
-
-            /* ---- 密码提示与密保 ---- */
-            if (m == "vault.hint") return db.VaultSetHint(S(a, "hint"));
-            if (m == "vault.qa.list") return db.VaultQaList();
-            if (m == "vault.qa.save") return db.VaultQaSave(a.TryGetProperty("list", out var ql) ? ql : default);
-            if (m == "vault.qa.verify") return db.VaultQaVerify(a.TryGetProperty("answers", out var qa) ? qa : default);
-            if (m == "vault.qa.reset") return db.VaultResetByQa(
-                a.TryGetProperty("answers", out var ra) ? ra : default, S(a, "password", ""));
-
-            return null;
-        }
+        /* V8Dispatch 已搬到 RpcDispatcher.cs（桌面与安卓共用同一份实现），见该文件。 */
 
         /* ================= 伪装窗 ================= */
 

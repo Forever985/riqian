@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -82,14 +80,54 @@ namespace Riqian
              * 全局只有一处主连接（MainForm 一个 Db，SelfCheck 一个 Db，不同时存在），
              * 池化本来就是白拿的收益：省不下一次真的 open，却让"关掉"变成谎话。
              * 关掉它，`Dispose()` 才是真的闭嘴。 */
-            conn = new SqliteConnection("Data Source=" + DbPath + ";Pooling=False");
-            conn.Open();
-            Exec("PRAGMA journal_mode=WAL;");
-            Exec("PRAGMA synchronous=NORMAL;");
-            Schema();
-            EnsureMilestones();   // 第 188 条：大事时间轴
-            Seed();
-            DailyBackup();
+            /*
+             * 打开数据库要允许重试 —— 因为「打不开」有两类，长得一样但性质完全不同：
+             *
+             *   ① 真坏了：权限没有、磁盘满、文件被改坏 —— 重试多少次都一样
+             *   ② 瞬时故障：磁盘刚唤醒还没就绪、杀毒软件正在扫这个文件、
+             *      上一份进程刚退出句柄还没回收
+             *
+             * 2026-11-11 撞的是第 ②类：启动后干等 40 秒，然后报
+             * `SQLite Error 8: attempt to write a readonly database`（在 Db.Seed 里）。
+             * 等这台机器缓过来再启动，同一个库一秒钟就开好了 —— 说明库本身没毛病。
+             *
+             * 所以这里重试 3 次、间隔递增（0.3s / 0.8s）。真正的第 ①类最多多花 1.1 秒，
+             * 但第 ②类能救回来。**不重试的话，用户看到的是"打不开"，重开一次又好了**，
+             * 那种问题最难被当成 bug 报上来。
+             */
+            Exception lastError = null;
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    conn = new SqliteConnection("Data Source=" + DbPath + ";Pooling=False");
+                    conn.Open();
+                    Exec("PRAGMA journal_mode=WAL;");
+                    Exec("PRAGMA synchronous=NORMAL;");
+                    Schema();
+                    EnsureMilestones();   // 第 188 条：大事时间轴
+                    Seed();
+                    DailyBackup();
+                    if (attempt > 1) Diag.Info("db.open", $"第 {attempt} 次尝试成功，库已打开");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    /* 半开的连接必须收掉，否则重试时旧句柄还占着文件，越试越坏 */
+                    try { conn?.Dispose(); } catch { }
+                    conn = null;
+
+                    if (attempt < 3)
+                    {
+                        Diag.Warn("db.open", $"打开数据库失败（第 {attempt}/3 次），稍后重试：" + ex.Message);
+                        System.Threading.Thread.Sleep(attempt == 1 ? 300 : 800);
+                    }
+                }
+            }
+
+            Diag.Error("db.open", $"连续 3 次打不开数据库：{DbPath}", lastError);
+            throw lastError;
         }
 
         /// <summary>
@@ -419,6 +457,15 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
              * 只要有人删档重开或者换台机器，立刻现形。所以必须放在这里。
              */
             EnsureV13();
+            /*
+             * #250：愿望单。
+             *
+             * 必须挂在这条链上，不能只靠 WishList 里的懒调用 ——
+             * 这个坑本项目已经踩过两次（jars / countdowns.sort）：
+             * 某个接口懒建表，结果别的查询先跑到，全新装机直接
+             * `no such table`，而老库因为早就建过了完全看不出来。
+             */
+            EnsureWishes();
 
             foreach (var t in new[] { "todos", "countdowns", "pomodoro" })
             {
@@ -874,6 +921,44 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
         public object EntryGet(string date)
         {
             var row = Rows("SELECT * FROM entries WHERE date=$d", ("$d", date)).FirstOrDefault();
+
+            /*
+             * #244 衍生（最后一处，也是最要紧的一处）：
+             * 这一天加了密码，就不许从这个接口把正文交出去。
+             *
+             * 之前只有 entry.list / search.all 做了判断，entry.get 没做。
+             * 而 entry.get 恰好是**唯一能拿到全部模块值 + 正文 + 标签**的接口，
+             * 也就是「真正的完整内容」。只在列表上做过滤、把内容源留着，
+             * 锁就只是界面上的装饰 —— 任何人走一次接口就全拿到了。
+             *
+             * 解锁后 IsDiaryLocked 返回 false，这里自然放行，不会把人锁死。
+             * 返回结构保持完全一致（空值 + locked 标记），前端不用改判断逻辑。
+             */
+            var locked = IsDiaryLocked(date);
+            if (locked)
+            {
+                return new
+                {
+                    date,
+                    exists = row != null,
+                    locked = true,
+                    title = "",
+                    status = "draft",
+                    publishedAt = "",
+                    fav = row == null ? 0 : Int(row["fav"]),
+                    bg = "",
+                    bgTone = "",
+                    plain = "",
+                    createdAt = null as string,
+                    updatedAt = null as string,
+                    values = new Dictionary<string, object>(),
+                    tags = new List<string>(),
+                    links = new List<object>(),
+                    backlinks = new List<object>(),
+                    revisionCount = 0,
+                };
+            }
+
             var vals = new Dictionary<string, object>();
             foreach (var v in Rows("SELECT module_id,val FROM vals WHERE date=$d", ("$d", date)))
                 vals[Str(v["module_id"])] = Parse(Str(v["val"]));
@@ -886,6 +971,15 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             {
                 date,
                 exists = row != null,
+                /*
+                 * 显式给 false，不是省掉。
+                 *
+                 * 锁定分支返回 locked=true，这一支如果直接不写这个字段，
+                 * 前端拿到的是 undefined —— 和 `false` 在 JS 里不等价：
+                 * `x.locked === false` 会是 false，`!x.locked` 又是 true，
+                 * 两种写法给出相反结论。字段要么一直有，要么一直没有。
+                 */
+                locked = false,
                 title = row == null ? "" : Str(row["title"]),
                 status = row == null || Str(row["status"]) == "" ? "draft" : Str(row["status"]),
                 publishedAt = row == null ? "" : Str(row["published_at"]),
@@ -1064,22 +1158,39 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             return rows.Select(r =>
             {
                 var d = Str(r["date"]);
+                /*
+                 * #244：加了密码的那一天，正文不能从这里出去。
+                 *
+                 * 「今天」页有 <Guarded> 挡着，但列表接口不认那把锁 ——
+                 * 用户给 10-31 加了密码，切到「流」照样看到全文，
+                 * 「记录」页、全局搜索也一样。挡在界面上只是看不见，不是拿不到。
+                 *
+                 * 这里直接把内容抹掉、只留一个 locked 标记，前端据此显示占位。
+                 * 不给内容，前端就算被改坏也泄露不出去。
+                 */
+                var locked = IsDiaryLocked(d);
                 var vals = new Dictionary<string, object>();
-                foreach (var v in Rows("SELECT module_id,val FROM vals WHERE date=$d", ("$d", d)))
-                    vals[Str(v["module_id"])] = Parse(Str(v["val"]));
+                if (!locked)
+                {
+                    foreach (var v in Rows("SELECT module_id,val FROM vals WHERE date=$d", ("$d", d)))
+                        vals[Str(v["module_id"])] = Parse(Str(v["val"]));
+                }
                 return new
                 {
                     date = d,
-                    title = Str(r["title"]),
+                    locked,
+                    title = locked ? "" : Str(r["title"]),
                     status = Str(r["status"]) == "" ? "draft" : Str(r["status"]),
                     fav = Int(r["fav"]),
                     bg = Str(r["bg"]),
                     bgTone = Str(r["bg_tone"]),
-                    plain = Str(r["plain"]),
-                    chars = Str(r["plain"]).Replace(" ", "").Length,
+                    plain = locked ? "" : Str(r["plain"]),
+                    chars = locked ? 0 : Str(r["plain"]).Replace(" ", "").Length,
                     updatedAt = Str(r["updated_at"]),
                     values = vals,
-                    tags = Rows("SELECT tag FROM entry_tags WHERE date=$d", ("$d", d)).Select(x => Str(x["tag"])).ToList()
+                    tags = locked
+                        ? new List<string>()
+                        : Rows("SELECT tag FROM entry_tags WHERE date=$d", ("$d", d)).Select(x => Str(x["tag"])).ToList()
                 };
             }).ToList();
         }
@@ -2215,6 +2326,13 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             return (id, sha, ext, false);
         }
 
+        /// <summary>
+        /// 生成缩略图。**这里只算路径，真正的像素处理走 Platform.ThumbMaker**。
+        ///
+        /// 原因见 Platform.cs 顶部：GDI+ 在安卓上会抛 PlatformNotSupportedException，
+        /// 而 .NET 7 起 System.Drawing.EnableUnixSupport 那个逃生开关已被删除。
+        /// 把判据收在一处，Windows 走 Platform.Windows.cs，安卓走平台自己的实现。
+        /// </summary>
         private void MakeThumb(string absPath, string id)
         {
             try
@@ -2222,36 +2340,7 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                 Directory.CreateDirectory(ThumbDir);
                 var outp = Path.Combine(ThumbDir, id + ".jpg");
                 if (File.Exists(outp)) return;
-
-                using var img = Image.FromFile(absPath);
-                // 手机照片常带 EXIF 方向，不校正会横躺
-                try
-                {
-                    if (img.PropertyIdList.Contains(0x0112))
-                    {
-                        var o = BitConverter.ToUInt16(img.GetPropertyItem(0x0112).Value, 0);
-                        if (o == 3) img.RotateFlip(RotateFlipType.Rotate180FlipNone);
-                        else if (o == 6) img.RotateFlip(RotateFlipType.Rotate90FlipNone);
-                        else if (o == 8) img.RotateFlip(RotateFlipType.Rotate270FlipNone);
-                    }
-                }
-                catch { }
-
-                const int max = 360;
-                double k = Math.Min(1.0, Math.Min((double)max / img.Width, (double)max / img.Height));
-                int w = Math.Max(1, (int)(img.Width * k)), h = Math.Max(1, (int)(img.Height * k));
-
-                using var bmp = new Bitmap(w, h);
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.Clear(Color.White);
-                    g.DrawImage(img, 0, 0, w, h);
-                }
-                var jpg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-                using var ps = new EncoderParameters(1);
-                ps.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
-                bmp.Save(outp, jpg, ps);
+                Platform.MakeThumb(absPath, outp);
             }
             catch (Exception ex) { Diag.Warn("media.thumb", "缩略图生成失败 id=" + id, ex); }
         }
@@ -2260,7 +2349,7 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
         {
             var size = 0L; int w = 0, h = 0;
             try { size = new FileInfo(absPath).Length; } catch { }
-            try { using var img = Image.FromFile(absPath); w = img.Width; h = img.Height; } catch { }
+            try { (w, h) = Platform.ImageSize(absPath); } catch { }
 
             if (!dup && !RowExists(id))
                 Exec(@"INSERT OR REPLACE INTO media(id,sha,ext,bytes,width,height,orig_name,note,created_at,updated_at,rev)
@@ -2626,21 +2715,58 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
             };
         }
 
-        public object OnThisDay()
+        /**
+         * #249：那年今日（历史上的今天）。
+         *
+         * 原来固定用 DateTime.Today —— 用户翻到 10-31 看旧日记时，
+         * 右边那块「那年今日」显示的仍是**今天**（11-10）的周年，
+         * 和正在看的那一天毫无关系。这种错位不会报错，只会让人觉得
+         * 「这功能有点怪但说不上哪怪」。
+         *
+         * 现在接受日期参数，跟着当前打开的那一天走。
+         */
+        public object OnThisDay(string date)
         {
+            DateTime baseDay;
+            if (string.IsNullOrWhiteSpace(date)
+                || !DateTime.TryParse(date, out baseDay)) baseDay = DateTime.Today;
+
             var list = new List<object>();
+            /* 去重：整年那段和「同月同日」那段会命中同一天。
+               实测「1 年前的今天」会同时被两段捞到，界面上就会出现两条一模一样的。 */
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            /*
+             * 加锁的日记不能往这里摘正文（和 #244 同一个道理）。
+             * 摘要也算泄露 —— 这里还截了开头几十个字，比列表泄露得更多。
+             */
+            void AddIfOpen(string d, int years, string plain)
+            {
+                if (IsDiaryLocked(d)) return;
+                if (!seen.Add(d)) return;
+                list.Add(new { years, date = d, plain });
+            }
+
             foreach (var yearsAgo in new[] { 1, 2, 3, 5, 10 })
             {
-                var d = DateTime.Today.AddYears(-yearsAgo).ToString("yyyy-MM-dd");
+                var d = baseDay.AddYears(-yearsAgo).ToString("yyyy-MM-dd");
                 var r = Rows("SELECT date,plain FROM entries WHERE date=$d AND LENGTH(plain)>0", ("$d", d)).FirstOrDefault();
-                if (r != null)
-                    list.Add(new { years = yearsAgo, date = d, plain = Str(r["plain"]) });
+                if (r != null) AddIfOpen(d, yearsAgo, Str(r["plain"]));
             }
-            // 同月同一天更久远的记录
-            var mmdd = DateTime.Today.ToString("MM-dd");
-            foreach (var r in Rows("SELECT date,plain FROM entries WHERE substr(date,6,5)=$m AND date<>$t AND LENGTH(plain)>0 ORDER BY date DESC LIMIT 3",
-                ("$m", mmdd), ("$t", Today)))
-                list.Add(new { years = DateTime.Today.Year - DateTime.Parse(Str(r["date"])).Year, date = Str(r["date"]), plain = Str(r["plain"]) });
+
+            // 同月同一天更久远的记录（不是整年，但也是"这一天"）
+            var mmdd = baseDay.ToString("MM-dd");
+            var self = baseDay.ToString("yyyy-MM-dd");
+            foreach (var r in Rows(@"SELECT date,plain FROM entries
+                                     WHERE substr(date,6,5)=$m AND date<>$t AND LENGTH(plain)>0
+                                     ORDER BY date DESC LIMIT 3",
+                ("$m", mmdd), ("$t", self)))
+            {
+                var d = Str(r["date"]);
+                int yr;
+                try { yr = baseDay.Year - DateTime.Parse(d).Year; } catch { yr = 0; }
+                AddIfOpen(d, yr, Str(r["plain"]));
+            }
             return list;
         }
 
@@ -2686,7 +2812,29 @@ CREATE INDEX IF NOT EXISTS ix_changes_seq ON changes(seq);
                 habitLogs = Rows("SELECT * FROM habit_logs"),
                 checks = Rows("SELECT * FROM checks"),
                 pomodoro = Rows("SELECT * FROM pomodoro"),
-                templates = Templates()
+                templates = Templates(),
+                /*
+                 * #250 衍生：新表也要进备份。
+                 *
+                 * 加这张表的时候漏了导出 —— 用户导出一份「完整备份」，
+                 * 愿望单一个字都不在里面，换台机器恢复就全没了。
+                 * 原来的结构本身也漏了 jars / milestones / alarms / ledger 等，
+                 * 那是历史欠账，这轮至少不能让自己新加的表继续欠。
+                 */
+                wishes = Rows("SELECT * FROM wishes WHERE IFNULL(deleted_at,'')=''").Select(r => new
+                {
+                    id = Str(r["id"]),
+                    title = Str(r["title"]),
+                    note = Str(r["note"]),
+                    priceCents = Int(r["price_cents"]),
+                    url = Str(r["url"]),
+                    priority = Int(r["priority"]),
+                    targetDate = Str(r["target_date"]),
+                    done = Int(r["done"]),
+                    doneAt = Str(r["done_at"]),
+                    createdAt = Str(r["created_at"]),
+                    updatedAt = Str(r["updated_at"]),
+                })
             };
             var path = Path.Combine(ExportDir, "日签备份-" + Today + ".json");
             File.WriteAllText(path, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));

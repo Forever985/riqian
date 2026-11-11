@@ -315,6 +315,20 @@ export function DrawBoard({
       });
       if (!r.ok) { toast(r.err || '保存失败'); return; }
       setDirty(false);
+      /*
+       * #247：缩略图「保存了但看不到」。
+       *
+       * 上面 toMedia 已经真的把图写进库、也拿到了 id（库里 thumb_id 是有值的），
+       * 但列表页渲染走的是 imgUrl(thumb_id) —— 它查的是 lib/media.ts 里那份
+       * **内存索引**，而索引只在 reloadMedia() 时重建。
+       * 新建画板时没有任何代码去刷它，于是 resolveRef 返回 null，
+       * imgUrl 给出空串，<img src=""> 自然一片空白。
+       * 重开软件能看见，正是因为启动时 reloadMedia 跑过了 —— 这种
+       * 「重启就好」的 bug 最容易被当成偶发问题放过去。
+       *
+       * 只在真的生成了新缩略图时刷：没画东西的画板不该白发一次全量请求。
+       */
+      if (thumbId) await useStore.getState().reloadMedia().catch(() => null);
       toast(`已保存${r.id && !drawingId ? '，新画板建好了' : ''}`);
       onSaved?.(r.id || drawingId);
     } catch (e) {
